@@ -9,6 +9,7 @@ __pycache__/
 node_modules/
 frontend/node_modules/
 frontend/dist/
+backend/dist/
 
 .env
 .DS_Store

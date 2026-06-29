@@ -1,0 +1,14 @@
+[Unit]
+Description=Cookidoo Recipe Finder API
+After=network.target
+
+[Service]
+Type=simple
+User=centos
+WorkingDirectory=/home/centos/repositorios/cookidoo-scraper/backend
+ExecStart=/datos/logstash/etc/diccionarios/scripts/venv_daryl/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
