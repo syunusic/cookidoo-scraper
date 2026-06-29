@@ -32,3 +32,15 @@ export async function listRecipes(options = {}) {
   if (!res.ok) throw new Error('Error al listar recetas')
   return res.json()
 }
+
+let suggestCache = {}
+export async function suggestIngredients(query) {
+  if (!query || query.length < 1) return []
+  if (suggestCache[query]) return suggestCache[query]
+
+  const res = await fetch(`${API_BASE}/recipes/ingredients/suggest?q=${encodeURIComponent(query)}&limit=8`)
+  if (!res.ok) return []
+  const data = await res.json()
+  suggestCache[query] = data.suggestions
+  return data.suggestions
+}

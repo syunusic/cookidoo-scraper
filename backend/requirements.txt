@@ -7,3 +7,5 @@ pydantic
 beautifulsoup4
 requests
 tenacity
+thefuzz
+python-Levenshtein

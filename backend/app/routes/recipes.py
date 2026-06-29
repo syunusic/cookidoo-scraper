@@ -2,9 +2,10 @@ import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from thefuzz import fuzz
 
 from app.database import get_db
 from app.models import Recipe, RecipeIngredient
@@ -42,8 +43,8 @@ def tokenize(text: str) -> set[str]:
 
 
 def ingredient_matches(ingredient_name: str, raw_text: str, user_tokens: set[str]) -> bool:
-    name_tokens = tokenize(ingredient_name)
-    name_tokens.update(tokenize(raw_text))
+    combined = f"{ingredient_name} {raw_text}"
+    name_tokens = tokenize(combined)
 
     for ut in user_tokens:
         ut_stem = stem(ut)
@@ -53,6 +54,23 @@ def ingredient_matches(ingredient_name: str, raw_text: str, user_tokens: set[str
                 return True
             if len(ut) > 3 and (ut in nt or nt in ut):
                 return True
+
+    # fuzzy fallback: check if the user token partially matches ingredient text
+    user_phrase = " ".join(sorted(user_tokens))
+    ing_phrase = normalize(combined)
+    if fuzz.token_set_ratio(user_phrase, ing_phrase) > 75:
+        return True
+
+    # individual fuzzy checks for longer tokens
+    for ut in user_tokens:
+        if len(ut) < 4:
+            continue
+        for nt in name_tokens:
+            if len(nt) < 4:
+                continue
+            if fuzz.ratio(ut, nt) > 80:
+                return True
+
     return False
 
 
@@ -80,6 +98,52 @@ def recipe_to_dict(recipe: Recipe) -> dict:
         "fiber": recipe.fiber,
     }
 
+
+# ---------------------------------------------------------------------------
+# Ingredients autocomplete
+# ---------------------------------------------------------------------------
+
+@router.get("/ingredients/suggest")
+async def suggest_ingredients(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    query = (
+        select(RecipeIngredient.ingredient_name, func.count(RecipeIngredient.id).label("cnt"))
+        .where(RecipeIngredient.ingredient_name != "")
+        .group_by(RecipeIngredient.ingredient_name)
+        .order_by(func.count(RecipeIngredient.id).desc())
+    )
+    result = await db.execute(query)
+    all_ingredients = result.all()
+
+    # exact prefix matches first
+    q_lower = q.lower().strip()
+    prefix_matches = [r for r in all_ingredients if r[0].lower().startswith(q_lower)]
+    fuzzy_matches = []
+
+    if len(prefix_matches) < limit:
+        seen = {r[0].lower() for r in prefix_matches}
+        for r in all_ingredients:
+            if r[0].lower() in seen:
+                continue
+            if q_lower in r[0].lower():
+                fuzzy_matches.append(r)
+                continue
+            score = fuzz.partial_ratio(q_lower, r[0].lower())
+            if score > 60:
+                fuzzy_matches.append(r)
+
+        fuzzy_matches.sort(key=lambda x: -fuzz.partial_ratio(q_lower, x[0].lower()))
+
+    combined = prefix_matches + fuzzy_matches
+    return {"suggestions": [r[0] for r in combined[:limit]]}
+
+
+# ---------------------------------------------------------------------------
+# Recipe search
+# ---------------------------------------------------------------------------
 
 @router.get("/search")
 async def search_by_ingredients(
@@ -164,6 +228,10 @@ async def search_by_ingredients(
     }
 
 
+# ---------------------------------------------------------------------------
+# Single recipe
+# ---------------------------------------------------------------------------
+
 @router.get("/{recipe_id}")
 async def get_recipe(recipe_id: int, db: AsyncSession = Depends(get_db)):
     query = select(Recipe).options(selectinload(Recipe.ingredients)).where(Recipe.id == recipe_id)
@@ -175,6 +243,10 @@ async def get_recipe(recipe_id: int, db: AsyncSession = Depends(get_db)):
     recipe_dict["ingredients"] = [IngredientOut.model_validate(i) for i in recipe.ingredients]
     return recipe_dict
 
+
+# ---------------------------------------------------------------------------
+# List all
+# ---------------------------------------------------------------------------
 
 @router.get("/")
 async def list_recipes(
