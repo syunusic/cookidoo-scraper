@@ -1,0 +1,14 @@
+.venv/
+.venv_old/
+__pycache__/
+*.pyc
+*.db
+.cookidoo_cookies.json
+.cookidoo_cookies_storage.json
+
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+.env
+.DS_Store

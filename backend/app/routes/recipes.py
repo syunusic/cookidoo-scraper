@@ -1,0 +1,203 @@
+import re
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.models import Recipe, RecipeIngredient
+from app.schemas import RecipeOut, IngredientOut
+
+router = APIRouter(prefix="/api/recipes", tags=["recipes"])
+
+STOP_WORDS = {"de", "del", "la", "el", "los", "las", "un", "una", "y", "e", "con", "al", "en", "sin", "para", "por"}
+
+
+def normalize(text: str) -> str:
+    text = text.lower().strip()
+    text = re.sub(r"[´'`]", "", text)
+    text = re.sub(r"[^a-z0-9áéíóúüñç ]", " ", text)
+    words = [w for w in text.split() if w not in STOP_WORDS]
+    return " ".join(words)
+
+
+def stem(word: str) -> str:
+    word = word.lower().strip()
+    if word.endswith("ces"):
+        return word[:-3] + "z"
+    if word.endswith("es") and len(word) > 3:
+        return word[:-2]
+    if word.endswith("s") and len(word) > 2:
+        return word[:-1]
+    return word
+
+
+def tokenize(text: str) -> set[str]:
+    words = normalize(text).split()
+    stems = {stem(w) for w in words if len(w) > 1}
+    stems.update(w for w in words if len(w) > 1)
+    return stems
+
+
+def ingredient_matches(ingredient_name: str, raw_text: str, user_tokens: set[str]) -> bool:
+    name_tokens = tokenize(ingredient_name)
+    name_tokens.update(tokenize(raw_text))
+
+    for ut in user_tokens:
+        ut_stem = stem(ut)
+        for nt in name_tokens:
+            nt_stem = stem(nt)
+            if ut_stem == nt_stem:
+                return True
+            if len(ut) > 3 and (ut in nt or nt in ut):
+                return True
+    return False
+
+
+def recipe_to_dict(recipe: Recipe) -> dict:
+    return {
+        "id": recipe.id,
+        "cookidoo_id": recipe.cookidoo_id,
+        "name": recipe.name,
+        "url": recipe.url,
+        "image_url": recipe.image_url,
+        "language": recipe.language,
+        "country": recipe.country,
+        "total_time": recipe.total_time,
+        "prep_time": recipe.prep_time,
+        "cook_time": recipe.cook_time,
+        "yield_amount": recipe.yield_amount,
+        "difficulty": recipe.difficulty,
+        "rating": recipe.rating,
+        "review_count": recipe.review_count,
+        "categories": recipe.categories,
+        "calories": recipe.calories,
+        "carbs": recipe.carbs,
+        "fat": recipe.fat,
+        "protein": recipe.protein,
+        "fiber": recipe.fiber,
+    }
+
+
+@router.get("/search")
+async def search_by_ingredients(
+    q: str = Query(..., description="Comma-separated list of ingredients"),
+    max_missing: int = Query(3, ge=0, le=10),
+    language: Optional[str] = Query(None),
+    country: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    user_ingredients = [i.strip().lower() for i in q.split(",") if i.strip()]
+
+    if not user_ingredients:
+        return {"results": []}
+
+    user_tokens = set()
+    for ui in user_ingredients:
+        user_tokens.update(tokenize(ui))
+
+    query = select(Recipe).options(selectinload(Recipe.ingredients))
+    if language:
+        query = query.where(Recipe.language == language)
+    if country:
+        query = query.where(Recipe.country == country)
+
+    result = await db.execute(query)
+    recipes = result.scalars().all()
+
+    scored = []
+    for recipe in recipes:
+        db_ingredients = recipe.ingredients
+
+        if not db_ingredients:
+            continue
+
+        matched = 0
+        missing = []
+        for ingredient in db_ingredients:
+            name = ingredient.ingredient_name or ""
+            raw = ingredient.raw_text or ""
+            if ingredient_matches(name, raw, user_tokens):
+                matched += 1
+            else:
+                missing.append(ingredient.raw_text)
+
+        total = len(db_ingredients)
+        if total == 0:
+            continue
+
+        n_missing = len(missing)
+        if n_missing > max_missing:
+            continue
+
+        match_ratio = matched / total
+        if match_ratio == 0:
+            continue
+
+        score = match_ratio * (1 / (1 + n_missing * 0.5))
+
+        scored.append({
+            "recipe": recipe_to_dict(recipe),
+            "recipe_ingredients": [IngredientOut.model_validate(i) for i in db_ingredients],
+            "match_score": round(score, 3),
+            "missing_ingredients": missing,
+            "total_ingredients": total,
+            "matched_ingredients": matched,
+        })
+
+    scored.sort(key=lambda x: (-x["match_score"], x["missing_ingredients"]))
+
+    return {
+        "results": [
+            {
+                "recipe": {**r["recipe"], "ingredients": r["recipe_ingredients"]},
+                "match_score": r["match_score"],
+                "missing_ingredients": r["missing_ingredients"],
+                "total_ingredients": r["total_ingredients"],
+                "matched_ingredients": r["matched_ingredients"],
+            }
+            for r in scored[:limit]
+        ]
+    }
+
+
+@router.get("/{recipe_id}")
+async def get_recipe(recipe_id: int, db: AsyncSession = Depends(get_db)):
+    query = select(Recipe).options(selectinload(Recipe.ingredients)).where(Recipe.id == recipe_id)
+    result = await db.execute(query)
+    recipe = result.scalar_one_or_none()
+    if not recipe:
+        return {"error": "Recipe not found"}, 404
+    recipe_dict = recipe_to_dict(recipe)
+    recipe_dict["ingredients"] = [IngredientOut.model_validate(i) for i in recipe.ingredients]
+    return recipe_dict
+
+
+@router.get("/")
+async def list_recipes(
+    language: Optional[str] = Query(None),
+    country: Optional[str] = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(Recipe).options(selectinload(Recipe.ingredients))
+    if language:
+        query = query.where(Recipe.language == language)
+    if country:
+        query = query.where(Recipe.country == country)
+    query = query.offset(skip).limit(limit)
+
+    result = await db.execute(query)
+    recipes = result.scalars().all()
+
+    output = []
+    for recipe in recipes:
+        recipe_dict = recipe_to_dict(recipe)
+        recipe_dict["ingredients"] = [IngredientOut.model_validate(i) for i in recipe.ingredients]
+        output.append(recipe_dict)
+
+    return output

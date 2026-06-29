@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+sqlalchemy
+aiosqlite
+click
+pydantic
+beautifulsoup4
+requests
+tenacity
