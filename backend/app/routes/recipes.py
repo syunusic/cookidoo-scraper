@@ -148,7 +148,7 @@ async def suggest_ingredients(
 @router.get("/search")
 async def search_by_ingredients(
     q: str = Query(..., description="Comma-separated list of ingredients"),
-    max_missing: int = Query(3, ge=0, le=10),
+    max_missing: int = Query(999, ge=0, le=999),
     language: Optional[str] = Query(None),
     country: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=100),
@@ -198,21 +198,19 @@ async def search_by_ingredients(
             continue
 
         match_ratio = matched / total
-        if match_ratio == 0:
+        if matched == 0:
             continue
-
-        score = match_ratio * (1 / (1 + n_missing * 0.5))
 
         scored.append({
             "recipe": recipe_to_dict(recipe),
             "recipe_ingredients": [IngredientOut.model_validate(i) for i in db_ingredients],
-            "match_score": round(score, 3),
+            "match_score": round(matched + match_ratio, 3),
             "missing_ingredients": missing,
             "total_ingredients": total,
             "matched_ingredients": matched,
         })
 
-    scored.sort(key=lambda x: (-x["match_score"], x["missing_ingredients"]))
+    scored.sort(key=lambda x: (-x["matched_ingredients"], -x["match_score"], x["total_ingredients"]))
 
     return {
         "results": [
