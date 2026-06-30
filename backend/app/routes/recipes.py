@@ -1,4 +1,6 @@
+import json
 import re
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -12,6 +14,12 @@ from app.models import Recipe, RecipeIngredient
 from app.schemas import RecipeOut, IngredientOut
 
 router = APIRouter(prefix="/api/recipes", tags=["recipes"])
+
+_synonyms: dict[str, list[str]] = {}
+_syn_path = Path(__file__).resolve().parent.parent / "synonyms.json"
+if _syn_path.is_file():
+    with open(_syn_path) as _f:
+        _synonyms = json.load(_f)
 
 STOP_WORDS = {"de", "del", "la", "el", "los", "las", "un", "una", "y", "e", "con", "al", "en", "sin", "para", "por"}
 
@@ -159,8 +167,13 @@ async def search_by_ingredients(
     if not user_ingredients:
         return {"results": []}
 
-    user_tokens = set()
+    expanded = list(user_ingredients)
     for ui in user_ingredients:
+        for syn in _synonyms.get(ui, []):
+            expanded.append(syn)
+
+    user_tokens = set()
+    for ui in expanded:
         user_tokens.update(tokenize(ui))
 
     query = select(Recipe).options(selectinload(Recipe.ingredients))
