@@ -3,13 +3,36 @@ import sqlite3
 from pathlib import Path
 
 DB = Path(__file__).resolve().parent.parent / "cookidoo.db"
+
 LEADING_PREPOSITIONS = re.compile(r"^(de\s+(la\s+|las\s+|los\s+)?|del\s+|en\s+|con\s+|sin\s+|al\s+)")
+LEADING_NUMBER = re.compile(r"^[\d]+\s*-\s*[\d]*\s*|^-\s*[\d]+\s*")
+PREP_WORDS = re.compile(
+    r"^(copos|cubitos|hojas|ramitas|ramas|tallos|hebras|pipas|dientes|trozos|piezas|tiras|láminas|laminas|rodajas|rebanadas|lonchas|filetes|rallado|triturado|picado|molido|troceado|cortado|laminado|entero)\s+de\s+",
+    re.IGNORECASE,
+)
+UNIT_WORDS = re.compile(
+    r"^(cucharada|cucharadas|cucharadita|cucharaditas|pellizco|pellizcos|gramo|gramos|g|litro|litros|mililitro|mililitros|copa|copas|taza|tazas|vaso|vasos|chorrito|chorritos|ramita|ramitas|sobre|sobres)\s+de\s+",
+    re.IGNORECASE,
+)
+TRAILING_MODIFIERS = re.compile(
+    r"\s+(rallada|rallado|ralladas|rallados|tostado|tostada|tostados|tostadas|fresco|fresca|frescos|frescas|molida|molidos|molidas|triturado|triturada|triturados|trituradas|picado|picada|picados|picadas|congelado|congelada|congelados|congeladas|natural|líquido|liquido|recién\s+(molida|molido|rallada|rallado))$",
+    re.IGNORECASE,
+)
 
 
 def clean(name: str) -> str:
     name = name.strip()
     name = LEADING_PREPOSITIONS.sub("", name).strip()
-    return re.sub(r"\s+", " ", name)
+    name = LEADING_NUMBER.sub("", name).strip()
+    m = PREP_WORDS.match(name)
+    if m:
+        name = name[m.end():].strip()
+    m = UNIT_WORDS.match(name)
+    if m:
+        name = name[m.end():].strip()
+    name = TRAILING_MODIFIERS.sub("", name).strip()
+    name = re.sub(r"\s+", " ", name)
+    return name
 
 
 def main():
