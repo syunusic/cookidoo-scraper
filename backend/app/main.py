@@ -32,7 +32,12 @@ app.include_router(recipes_router)
 @app.get("/api/health")
 async def health():
     from app import __version__
-    return {"status": "ok", "version": __version__}
+    from app.database import async_session
+    from sqlalchemy import select, func
+    from app.models import Recipe
+    async with async_session() as session:
+        count = await session.scalar(select(func.count(Recipe.id)))
+    return {"status": "ok", "version": __version__, "recipe_count": count}
 
 
 dist = Path(__file__).resolve().parent.parent / "dist"

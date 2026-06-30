@@ -10,11 +10,15 @@ export default function App() {
   const [selectedRecipe, setSelectedRecipe] = useState(null)
   const [error, setError] = useState(null)
   const [version, setVersion] = useState('')
+  const [recipeCount, setRecipeCount] = useState(null)
 
   useEffect(() => {
     fetch('/api/health')
       .then(r => r.json())
-      .then(d => setVersion(d.version || ''))
+      .then(d => {
+        setVersion(d.version || '')
+        setRecipeCount(d.recipe_count)
+      })
       .catch(() => {})
   }, [])
 
@@ -88,8 +92,8 @@ export default function App() {
       </main>
 
       <footer className="text-center text-xs text-gray-400 py-4">
-        {version && <span>v{version} · </span>}
-        Cookidoo Recetas
+        {version && <span>v{version}</span>}
+        {recipeCount !== null && <span> · {recipeCount} recetas</span>}
       </footer>
     </div>
   )
