@@ -3,6 +3,7 @@ import os
 import re
 import time
 import random
+from typing import Optional
 
 from playwright.sync_api import sync_playwright
 
@@ -220,7 +221,7 @@ def discover_recipe_ids(max_scrolls: int = 20) -> set[str]:
     return ids
 
 
-def scrape_recipe_page(recipe_id: str, lang: str = "es-ES") -> dict | None:
+def scrape_recipe_page(recipe_id: str, lang: str = "es-ES") -> Optional[dict]:
     """Scrape a single recipe page using authenticated session."""
     import requests
     from bs4 import BeautifulSoup
