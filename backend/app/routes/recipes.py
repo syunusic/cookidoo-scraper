@@ -157,6 +157,7 @@ async def suggest_ingredients(
 async def search_by_ingredients(
     q: str = Query(..., description="Comma-separated list of ingredients"),
     max_missing: int = Query(999, ge=0, le=999),
+    max_total: Optional[int] = Query(None, ge=1, le=100),
     language: Optional[str] = Query(None),
     country: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=100),
@@ -208,6 +209,8 @@ async def search_by_ingredients(
 
         n_missing = len(missing)
         if n_missing > max_missing:
+            continue
+        if max_total is not None and total > max_total:
             continue
 
         match_ratio = matched / total

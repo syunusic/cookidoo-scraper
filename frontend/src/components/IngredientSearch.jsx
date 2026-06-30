@@ -7,6 +7,10 @@ export default function IngredientSearch({ onSearch, loading }) {
   const [suggestions, setSuggestions] = useState([])
   const [selectedSuggestion, setSelectedSuggestion] = useState(-1)
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [filterMissing, setFilterMissing] = useState(false)
+  const [maxMissing, setMaxMissing] = useState(3)
+  const [filterTotal, setFilterTotal] = useState(false)
+  const [maxTotal, setMaxTotal] = useState(15)
   const inputRef = useRef(null)
   const suggestTimer = useRef(null)
 
@@ -88,7 +92,10 @@ export default function IngredientSearch({ onSearch, loading }) {
   const handleSubmit = (e) => {
     e.preventDefault()
     if (ingredients.length === 0) return
-    onSearch(ingredients, {})
+    const options = {}
+    if (filterMissing) options.maxMissing = maxMissing
+    if (filterTotal) options.maxTotal = maxTotal
+    onSearch(ingredients, options)
   }
 
   return (
@@ -156,6 +163,47 @@ export default function IngredientSearch({ onSearch, loading }) {
             ))}
           </div>
         )}
+
+        <div className="flex gap-4 mb-4">
+          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={filterMissing}
+              onChange={(e) => setFilterMissing(e.target.checked)}
+              className="rounded border-gray-300 text-orange-500 focus:ring-orange-400"
+            />
+            Máx. faltantes
+            <select
+              value={maxMissing}
+              onChange={(e) => setMaxMissing(Number(e.target.value))}
+              disabled={!filterMissing}
+              className="border border-gray-300 rounded px-2 py-1 text-sm disabled:opacity-50"
+            >
+              {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={filterTotal}
+              onChange={(e) => setFilterTotal(e.target.checked)}
+              className="rounded border-gray-300 text-orange-500 focus:ring-orange-400"
+            />
+            Máx. ingredientes
+            <select
+              value={maxTotal}
+              onChange={(e) => setMaxTotal(Number(e.target.value))}
+              disabled={!filterTotal}
+              className="border border-gray-300 rounded px-2 py-1 text-sm disabled:opacity-50"
+            >
+              {[5,10,15,20,25,30].map(n => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </label>
+        </div>
 
         <button
           type="submit"

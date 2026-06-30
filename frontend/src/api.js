@@ -5,6 +5,7 @@ export async function searchRecipes(ingredients, options = {}) {
     q: ingredients.join(','),
     limit: options.limit ?? 20,
     ...(options.maxMissing !== undefined && { max_missing: options.maxMissing }),
+    ...(options.maxTotal !== undefined && { max_total: options.maxTotal }),
     ...(options.language && { language: options.language }),
     ...(options.country && { country: options.country }),
   })
