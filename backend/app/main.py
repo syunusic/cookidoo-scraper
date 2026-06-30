@@ -31,7 +31,8 @@ app.include_router(recipes_router)
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    from app import __version__
+    return {"status": "ok", "version": __version__}
 
 
 dist = Path(__file__).resolve().parent.parent / "dist"

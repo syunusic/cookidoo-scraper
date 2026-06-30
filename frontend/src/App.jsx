@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import IngredientSearch from './components/IngredientSearch'
 import RecipeList from './components/RecipeList'
 import RecipeDetail from './components/RecipeDetail'
@@ -9,6 +9,14 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [selectedRecipe, setSelectedRecipe] = useState(null)
   const [error, setError] = useState(null)
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    fetch('/api/health')
+      .then(r => r.json())
+      .then(d => setVersion(d.version || ''))
+      .catch(() => {})
+  }, [])
 
   const handleSearch = async (ingredients, options) => {
     setLoading(true)
@@ -78,6 +86,11 @@ export default function App() {
           />
         )}
       </main>
+
+      <footer className="text-center text-xs text-gray-400 py-4">
+        {version && <span>v{version} · </span>}
+        Cookidoo Recetas
+      </footer>
     </div>
   )
 }
