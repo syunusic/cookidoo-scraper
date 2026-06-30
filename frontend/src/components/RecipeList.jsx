@@ -1,4 +1,25 @@
+import { useState, useMemo } from 'react'
+
 export default function RecipeList({ results, onRecipeClick, onBack }) {
+  const [selectedCats, setSelectedCats] = useState([])
+
+  const allCats = useMemo(() => {
+    const set = new Set()
+    for (const r of results) {
+      for (const c of (r.recipe.categories || [])) {
+        if (c) set.add(c)
+      }
+    }
+    return [...set].sort()
+  }, [results])
+
+  const filtered = useMemo(() => {
+    if (selectedCats.length === 0) return results
+    return results.filter(r =>
+      (r.recipe.categories || []).some(c => selectedCats.includes(c))
+    )
+  }, [results, selectedCats])
+
   if (!results || results.length === 0) {
     return (
       <div className="mt-8 text-center py-12 bg-white rounded-2xl shadow">
@@ -12,19 +33,43 @@ export default function RecipeList({ results, onRecipeClick, onBack }) {
     )
   }
 
+  const toggleCat = (cat) => {
+    setSelectedCats(prev =>
+      prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
+    )
+  }
+
   return (
     <div className="mt-8">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-gray-700">
-          {results.length} receta{results.length !== 1 ? 's' : ''} encontrada{results.length !== 1 ? 's' : ''}
+          {filtered.length} receta{filtered.length !== 1 ? 's' : ''} encontrada{filtered.length !== 1 ? 's' : ''}
         </h2>
         <button onClick={onBack} className="text-sm text-orange-500 hover:text-orange-700 font-medium">
           ← Nueva búsqueda
         </button>
       </div>
 
+      {allCats.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {allCats.map(cat => (
+            <button
+              key={cat}
+              onClick={() => toggleCat(cat)}
+              className={`px-3 py-1 rounded-full text-sm border transition-colors ${
+                selectedCats.includes(cat)
+                  ? 'bg-orange-500 text-white border-orange-500'
+                  : 'bg-white text-gray-600 border-gray-300 hover:border-orange-300'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="space-y-3">
-        {results.map((result) => {
+        {filtered.map((result) => {
           const r = result.recipe
           const pct = Math.round((result.matched_ingredients / result.total_ingredients) * 100)
 
@@ -50,6 +95,16 @@ export default function RecipeList({ results, onRecipeClick, onBack }) {
                     {r.difficulty && <span>• {r.difficulty}</span>}
                     {r.yield_amount && <span>• {r.yield_amount}</span>}
                   </div>
+
+                  {r.categories && r.categories.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {r.categories.map(c => (
+                        <span key={c} className="text-xs text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="mt-2 flex items-center gap-3">
                     <span className="text-sm font-medium text-gray-700">

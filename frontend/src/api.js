@@ -3,8 +3,8 @@ const API_BASE = '/api'
 export async function searchRecipes(ingredients, options = {}) {
   const params = new URLSearchParams({
     q: ingredients.join(','),
-    max_missing: options.maxMissing ?? 3,
     limit: options.limit ?? 20,
+    ...(options.maxMissing !== undefined && { max_missing: options.maxMissing }),
     ...(options.language && { language: options.language }),
     ...(options.country && { country: options.country }),
   })
