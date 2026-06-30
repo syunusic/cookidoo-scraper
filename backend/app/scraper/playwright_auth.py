@@ -367,7 +367,8 @@ async def scrape_all(limit: int = 0):
         existing = {row[0] for row in r.all()}
     print(f"Already in DB: {len(existing)} recipes")
 
-    new_ids = sorted(ids - existing)
+    existing_numeric = {rid.lstrip("r") for rid in existing}
+    new_ids = sorted(ids - existing_numeric)
     print(f"New recipes to scrape: {len(new_ids)}")
 
     if limit > 0:
