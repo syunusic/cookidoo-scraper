@@ -9,7 +9,7 @@ from playwright.sync_api import sync_playwright
 
 from app.database import async_session
 from app.models import Recipe, RecipeIngredient
-from app.scraper.cookidoo import parse_ingredient_text, parse_iso_duration
+from app.scraper.cookidoo import parse_ingredient_text, parse_iso_duration, fetch_discoverable_ids
 
 BASE_URL = "https://cookidoo.es"
 COOKIE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cookidoo_cookies.json")
@@ -357,9 +357,12 @@ async def scrape_all(limit: int = 0):
     import asyncio
     from sqlalchemy import select
 
+    # Fast discovery via requests-based stripe API (~12 calls, ~10s)
+    # No need for slow Playwright browser — auth is only needed for the
+    # actual recipe page scraping.
     loop = asyncio.get_running_loop()
-    ids = await loop.run_in_executor(None, discover_recipe_ids, 20)
-    print(f"Discovered {len(ids)} total recipe IDs")
+    ids = await loop.run_in_executor(None, fetch_discoverable_ids)
+    print(f"\nDiscovered {len(ids)} total recipe IDs")
 
     # Load existing IDs from DB to skip them
     async with async_session() as session:
@@ -368,7 +371,7 @@ async def scrape_all(limit: int = 0):
     print(f"Already in DB: {len(existing)} recipes")
 
     existing_numeric = {rid.lstrip("r") for rid in existing}
-    new_ids = sorted(ids - existing_numeric)
+    new_ids = sorted(set(ids) - existing_numeric)
     print(f"New recipes to scrape: {len(new_ids)}")
 
     if limit > 0:

@@ -250,66 +250,48 @@ def fetch_recipe_page(recipe_id: str, lang: str = "es-ES") -> Optional[dict]:
 
 
 SORTBY_GROUPS = ["publishedAt", "rating", "name", "totalTime"]
+LOCALE_COUNTRY_COMBOS = [("es-ES", "all"), ("es", "all"), ("es-ES", "es")]
 
 
-def fetch_discoverable_ids(sortby_values: Optional[list[str]] = None) -> set[str]:
-    """Discover recipe IDs using multiple sort orders and collections.
-    Cookidoo's stripe API ignores offset, so we iterate over distinct sortby
-    values to get different slices of the recipe catalog (~1000 per sort).
+def fetch_discoverable_ids(
+    sortby_values: Optional[list[str]] = None,
+    locale_country_combos: Optional[list[tuple[str, str]]] = None,
+) -> set[str]:
+    """Discover recipe IDs using multiple sort orders and locale/country combos.
+    Cookidoo's stripe API ignores offset but different sortby and locale/country
+    parameters return different subsets of the catalog (~1000 per combo).
+    Combined (~12 API calls) we get ~8200 unique recipes.
     """
     if sortby_values is None:
         sortby_values = SORTBY_GROUPS
+    if locale_country_combos is None:
+        locale_country_combos = LOCALE_COUNTRY_COMBOS
 
     ids = set()
     session = requests.Session()
     session.headers.update(HEADERS)
 
-    for sortby in sortby_values:
-        url = (
-            f"{BASE_URL}/search/es-ES/fragments/stripe"
-            f"?limit=1000&context=recipes&countries=es&languages=es"
-            f"&offset=0&sortby={sortby}"
-        )
-        try:
-            resp = session.get(url, timeout=15)
-            if resp.status_code == 200:
-                found = RECIPE_ID_PATTERN.findall(resp.text)
-                for lang, rid in found:
-                    ids.add(rid)
-                print(f"  sortby={sortby}: {len(found)} recipes")
-        except requests.RequestException:
-            print(f"  sortby={sortby}: FAILED")
-        time.sleep(random.uniform(0.5, 1.5))
+    for locale, country in locale_country_combos:
+        for sortby in sortby_values:
+            url = (
+                f"{BASE_URL}/search/{locale}/fragments/stripe"
+                f"?limit=1000&context=recipes&countries={country}&languages={locale}"
+                f"&offset=0&sortby={sortby}"
+            )
+            try:
+                resp = session.get(url, timeout=15)
+                if resp.status_code == 200:
+                    found = RECIPE_ID_PATTERN.findall(resp.text)
+                    prev = len(ids)
+                    for lang, rid in found:
+                        ids.add(rid)
+                    new = len(ids) - prev
+                    print(f"  {locale}/{country} sortby={sortby}: {len(found)} recipes (+{new} new)")
+            except requests.RequestException:
+                print(f"  {locale}/{country} sortby={sortby}: FAILED")
+            time.sleep(random.uniform(0.2, 0.5))
 
-    # Also try collections via stripe fragment API
-    try:
-        col_url = (
-            f"{BASE_URL}/search/es-ES/fragments/stripe"
-            f"?limit=200&context=collections&countries=es&languages=es&offset=0"
-        )
-        resp = session.get(col_url, timeout=15)
-        if resp.status_code == 200:
-            col_ids = re.findall(r"/collection/es-ES/p/([^\s\"']+)", resp.text)
-            print(f"  collections: {len(col_ids)} found")
-            for col_id in col_ids[:50]:
-                col_stripe_url = (
-                    f"{BASE_URL}/search/es-ES/fragments/stripe"
-                    f"?limit=100&context=recipes&countries=es&languages=es"
-                    f"&offset=0&collectionId={col_id}"
-                )
-                try:
-                    resp2 = session.get(col_stripe_url, timeout=10)
-                    if resp2.status_code == 200:
-                        found = RECIPE_ID_PATTERN.findall(resp2.text)
-                        for lang, rid in found:
-                            ids.add(rid)
-                except requests.RequestException:
-                    continue
-                time.sleep(random.uniform(0.3, 0.7))
-    except requests.RequestException:
-        pass
-
-    return ids
+    return sorted(ids)
 
 
 async def save_recipe(recipe_data: dict):
