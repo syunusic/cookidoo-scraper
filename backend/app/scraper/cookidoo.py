@@ -73,6 +73,16 @@ def clean_html_fractions(text: str) -> str:
     return text
 
 
+LEADING_PREPOSITIONS = re.compile(r"^(de\s+(la\s+|las\s+|los\s+)?|del\s+|en\s+|con\s+|sin\s+|al\s+)")
+
+
+def clean_ingredient_name(name: str) -> str:
+    name = name.strip()
+    name = LEADING_PREPOSITIONS.sub("", name).strip()
+    name = re.sub(r"\s+", " ", name)
+    return name
+
+
 def parse_ingredient_text(text: str) -> tuple:
     text = clean_html_fractions(text.strip())
     note = ""
@@ -91,7 +101,7 @@ def parse_ingredient_text(text: str) -> tuple:
         else:
             qty = float(qty_str.replace(",", "."))
         unit = simple_match.group(2)
-        name = simple_match.group(3).strip()
+        name = clean_ingredient_name(simple_match.group(3))
         return name, qty, unit, note
 
     count_match = re.match(r"(\d+(?:[./]\d+)?)\s+(.+)$", text)
