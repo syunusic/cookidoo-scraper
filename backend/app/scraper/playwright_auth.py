@@ -86,13 +86,72 @@ def get_authenticated_session():
     return session
 
 
-def discover_recipe_ids(max_scrolls: int = 20) -> set[str]:
-    """Discover recipe IDs by browsing Cookidoo search with Playwright (real browser)."""
+SORTBY_GROUPS = ["publishedAt", "rating", "name", "totalTime"]
+
+
+def _discover_from_search(page, sortby: str, max_scrolls: int = 20) -> set[str]:
+    """Scroll the search page with a given sort and collect recipe IDs."""
     ids = set()
+    search_url = (
+        f"{BASE_URL}/search/es-ES?"
+        f"countries=es&languages=es&context=recipes&sortby={sortby}"
+    )
+    print(f"  Searching sortby={sortby}...")
+    page.goto(search_url, wait_until="networkidle")
+    page.wait_for_timeout(3000)
+
+    for btn_text in ["Aceptar", "Aceptar todas", "Cerrar", "Rechazar"]:
+        try:
+            btn = page.locator(f"button:has-text('{btn_text}')")
+            if btn.is_visible(timeout=1000):
+                btn.click()
+                page.wait_for_timeout(1000)
+        except Exception:
+            pass
+
+    prev_count = 0
+    for scroll in range(max_scrolls):
+        links = page.locator("a[href*='/recipes/recipe/']").all()
+        new_ids = set()
+        for link in links:
+            href = link.get_attribute("href")
+            if href:
+                m = RECIPE_ID_PATTERN.search(href)
+                if m:
+                    new_ids.add(m.group(2))
+        ids.update(new_ids)
+
+        added = len(ids) - prev_count
+        if added > 0:
+            print(f"    Scroll {scroll + 1}: {len(ids)} recipes found (+{added})")
+        prev_count = len(ids)
+
+        if added == 0 and scroll > 2:
+            break
+
+        try:
+            btn = page.locator("button:has-text('Ver más'), button:has-text('Mostrar más'), button:has-text('Cargar más')")
+            if btn.is_visible(timeout=1000):
+                btn.click()
+                page.wait_for_timeout(2000)
+                continue
+        except Exception:
+            pass
+
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_timeout(2000)
+
+    return ids
+
+
+def discover_recipe_ids(max_scrolls: int = 20) -> set[str]:
+    """Discover recipe IDs by browsing Cookidoo search with Playwright (real browser).
+    Iterates over multiple sort orders to maximize coverage.
+    """
+    from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = None
 
         storage_file = COOKIE_FILE.replace(".json", "_storage.json")
         if os.path.exists(storage_file):
@@ -113,64 +172,20 @@ def discover_recipe_ids(max_scrolls: int = 20) -> set[str]:
             context.add_cookies(cookies)
         else:
             browser.close()
-            return ids
+            return set()
 
         page = context.new_page()
+        ids = set()
 
-        search_url = (
-            f"{BASE_URL}/search/es-ES?"
-            f"countries=es&languages=es&context=recipes&sortby=publishedAt"
-        )
-        print("Navigating to search page...")
-        page.goto(search_url, wait_until="networkidle")
-        page.wait_for_timeout(3000)
-
-        # Try to dismiss any cookie consent or overlay
-        for btn_text in ["Aceptar", "Aceptar todas", "Cerrar", "Rechazar"]:
-            try:
-                btn = page.locator(f"button:has-text('{btn_text}')")
-                if btn.is_visible(timeout=1000):
-                    btn.click()
-                    page.wait_for_timeout(1000)
-            except Exception:
-                pass
-
-        prev_count = 0
-        for scroll in range(max_scrolls):
-            links = page.locator("a[href*='/recipes/recipe/']").all()
-            new_ids = set()
-            for link in links:
-                href = link.get_attribute("href")
-                if href:
-                    m = RECIPE_ID_PATTERN.search(href)
-                    if m:
-                        new_ids.add(m.group(2))
-            ids.update(new_ids)
-
-            added = len(ids) - prev_count
-            if added > 0:
-                print(f"  Scroll {scroll + 1}: {len(ids)} recipes found (+{added})")
-            prev_count = len(ids)
-
-            if added == 0 and scroll > 2:
-                break
-
-            # Try clicking "Ver más" button if present
-            try:
-                btn = page.locator("button:has-text('Ver más'), button:has-text('Mostrar más'), button:has-text('Cargar más')")
-                if btn.is_visible(timeout=1000):
-                    btn.click()
-                    page.wait_for_timeout(2000)
-                    continue
-            except Exception:
-                pass
-
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(2000)
+        for sortby in SORTBY_GROUPS:
+            sort_ids = _discover_from_search(page, sortby, max_scrolls)
+            before = len(ids)
+            ids |= sort_ids
+            print(f"    -> +{len(ids) - before} new recipes")
 
         # Also browse collections for more IDs
         col_url = f"{BASE_URL}/search/es-ES?countries=es&context=collections&sortby=publishedAt"
-        print(f"Browsing collections...")
+        print(f"  Browsing collections...")
         page.goto(col_url, wait_until="networkidle")
         page.wait_for_timeout(3000)
 
@@ -183,8 +198,8 @@ def discover_recipe_ids(max_scrolls: int = 20) -> set[str]:
                 if col_id and col_id not in seen_cols:
                     seen_cols.add(col_id)
 
-        print(f"Found {len(seen_cols)} collections")
-        for col_id in list(seen_cols)[:10]:
+        print(f"  Found {len(seen_cols)} collections")
+        for col_id in list(seen_cols)[:50]:
             try:
                 page.goto(f"{BASE_URL}/collection/es-ES/p/{col_id}", wait_until="networkidle")
                 page.wait_for_timeout(2000)
@@ -195,7 +210,7 @@ def discover_recipe_ids(max_scrolls: int = 20) -> set[str]:
                         m = RECIPE_ID_PATTERN.search(href)
                         if m:
                             ids.add(m.group(2))
-                print(f"  Collection {col_id}: {len(ids)} total recipes")
+                print(f"    Collection {col_id}: {len(ids)} total recipes")
             except Exception:
                 continue
 

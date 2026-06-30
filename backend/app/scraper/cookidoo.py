@@ -249,59 +249,63 @@ def fetch_recipe_page(recipe_id: str, lang: str = "es-ES") -> Optional[dict]:
     return result
 
 
-def fetch_discoverable_ids(max_pages: int = 5) -> set[str]:
+SORTBY_GROUPS = ["publishedAt", "rating", "name", "totalTime"]
+
+
+def fetch_discoverable_ids(sortby_values: Optional[list[str]] = None) -> set[str]:
+    """Discover recipe IDs using multiple sort orders and collections.
+    Cookidoo's stripe API ignores offset, so we iterate over distinct sortby
+    values to get different slices of the recipe catalog (~1000 per sort).
+    """
+    if sortby_values is None:
+        sortby_values = SORTBY_GROUPS
+
     ids = set()
     session = requests.Session()
     session.headers.update(HEADERS)
 
-    explore_urls = [
-        f"{BASE_URL}/foundation/es-ES/explore",
-        f"{BASE_URL}/search/es-ES?countries=es&languages=es&context=recipes&sortby=publishedAt",
-    ]
-
-    for url in explore_urls:
+    for sortby in sortby_values:
+        url = (
+            f"{BASE_URL}/search/es-ES/fragments/stripe"
+            f"?limit=1000&context=recipes&countries=es&languages=es"
+            f"&offset=0&sortby={sortby}"
+        )
         try:
             resp = session.get(url, timeout=15)
             if resp.status_code == 200:
                 found = RECIPE_ID_PATTERN.findall(resp.text)
                 for lang, rid in found:
                     ids.add(rid)
+                print(f"  sortby={sortby}: {len(found)} recipes")
         except requests.RequestException:
-            continue
-        time.sleep(random.uniform(1, 2))
-
-    for _ in range(max_pages):
-        search_url = f"{BASE_URL}/search/es-ES/fragments/stripe?limit=24&context=recipes&countries=es&languages=es&offset={len(ids)}"
-        try:
-            resp = session.get(search_url, timeout=15)
-            if resp.status_code == 200:
-                found = RECIPE_ID_PATTERN.findall(resp.text)
-                if not found:
-                    break
-                for lang, rid in found:
-                    ids.add(rid)
-            else:
-                break
-        except requests.RequestException:
-            break
+            print(f"  sortby={sortby}: FAILED")
         time.sleep(random.uniform(0.5, 1.5))
 
-    collection_url = f"{BASE_URL}/search/es-ES?countries=es&context=collections&sortby=publishedAt"
+    # Also try collections via stripe fragment API
     try:
-        resp = session.get(collection_url, timeout=15)
+        col_url = (
+            f"{BASE_URL}/search/es-ES/fragments/stripe"
+            f"?limit=200&context=collections&countries=es&languages=es&offset=0"
+        )
+        resp = session.get(col_url, timeout=15)
         if resp.status_code == 200:
             col_ids = re.findall(r"/collection/es-ES/p/([^\s\"']+)", resp.text)
-            for col_id in col_ids[:5]:
-                col_url = f"{BASE_URL}/collection/es-ES/p/{col_id}"
+            print(f"  collections: {len(col_ids)} found")
+            for col_id in col_ids[:50]:
+                col_stripe_url = (
+                    f"{BASE_URL}/search/es-ES/fragments/stripe"
+                    f"?limit=100&context=recipes&countries=es&languages=es"
+                    f"&offset=0&collectionId={col_id}"
+                )
                 try:
-                    col_resp = session.get(col_url, timeout=15)
-                    if col_resp.status_code == 200:
-                        found = RECIPE_ID_PATTERN.findall(col_resp.text)
+                    resp2 = session.get(col_stripe_url, timeout=10)
+                    if resp2.status_code == 200:
+                        found = RECIPE_ID_PATTERN.findall(resp2.text)
                         for lang, rid in found:
                             ids.add(rid)
                 except requests.RequestException:
                     continue
-                time.sleep(random.uniform(0.5, 1))
+                time.sleep(random.uniform(0.3, 0.7))
     except requests.RequestException:
         pass
 
@@ -362,7 +366,7 @@ async def scrape_recipes(languages: Optional[list[str]] = None, limit: int = 0):
     if languages is None:
         languages = ["es-ES"]
 
-    discovered = fetch_discoverable_ids(max_pages=3)
+    discovered = fetch_discoverable_ids()
     if not discovered:
         return 0
 
