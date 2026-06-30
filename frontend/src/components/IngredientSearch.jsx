@@ -4,7 +4,6 @@ import { suggestIngredients } from '../api'
 export default function IngredientSearch({ onSearch, loading }) {
   const [input, setInput] = useState('')
   const [ingredients, setIngredients] = useState([])
-  const [maxMissing, setMaxMissing] = useState(3)
   const [suggestions, setSuggestions] = useState([])
   const [selectedSuggestion, setSelectedSuggestion] = useState(-1)
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -89,7 +88,7 @@ export default function IngredientSearch({ onSearch, loading }) {
   const handleSubmit = (e) => {
     e.preventDefault()
     if (ingredients.length === 0) return
-    onSearch(ingredients, { maxMissing })
+    onSearch(ingredients, {})
   }
 
   return (
@@ -157,21 +156,6 @@ export default function IngredientSearch({ onSearch, loading }) {
             ))}
           </div>
         )}
-
-        <div className="flex items-center gap-4 mb-4">
-          <label className="text-sm text-gray-600">
-            Máx. ingredientes faltantes:
-          </label>
-          <select
-            value={maxMissing}
-            onChange={(e) => setMaxMissing(Number(e.target.value))}
-            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
-          >
-            {[0, 1, 2, 3, 4, 5].map(n => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-          </select>
-        </div>
 
         <button
           type="submit"

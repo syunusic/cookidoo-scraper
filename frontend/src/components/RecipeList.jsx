@@ -26,7 +26,7 @@ export default function RecipeList({ results, onRecipeClick, onBack }) {
       <div className="space-y-3">
         {results.map((result) => {
           const r = result.recipe
-          const matchPct = Math.round(result.match_score * 100)
+          const pct = Math.round((result.matched_ingredients / result.total_ingredients) * 100)
 
           return (
             <div
@@ -52,18 +52,18 @@ export default function RecipeList({ results, onRecipeClick, onBack }) {
                   </div>
 
                   <div className="mt-2 flex items-center gap-3">
-                    <div className="flex items-center gap-1">
-                      <div className="h-2 w-24 bg-gray-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-green-500 rounded-full"
-                          style={{ width: `${matchPct}%` }}
-                        />
-                      </div>
-                      <span className="text-xs text-gray-500">{matchPct}%</span>
+                    <span className="text-sm font-medium text-gray-700">
+                      {result.matched_ingredients}/{result.total_ingredients}
+                    </span>
+                    <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden max-w-24">
+                      <div
+                        className="h-full bg-green-500 rounded-full"
+                        style={{ width: `${pct}%` }}
+                      />
                     </div>
                     {result.missing_ingredients.length > 0 ? (
                       <span className="text-xs text-amber-600">
-                        Faltan: {result.missing_ingredients.length}
+                        Faltan {result.missing_ingredients.length}
                       </span>
                     ) : (
                       <span className="text-xs text-green-600 font-medium">
@@ -74,7 +74,7 @@ export default function RecipeList({ results, onRecipeClick, onBack }) {
 
                   {result.missing_ingredients.length > 0 && (
                     <div className="mt-1 text-xs text-gray-400 truncate">
-                      Te falta: {result.missing_ingredients.slice(0, 3).join(', ')}
+                      Falta: {result.missing_ingredients.slice(0, 3).join(', ')}
                       {result.missing_ingredients.length > 3 && '...'}
                     </div>
                   )}
