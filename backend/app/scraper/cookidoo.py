@@ -2,6 +2,7 @@ import re
 import json
 import time
 import random
+from typing import Optional
 from urllib.parse import urljoin
 
 import requests
@@ -115,6 +116,19 @@ def parse_qty(qty_str: str) -> float:
     return float(qty_str.replace(",", "."))
 
 
+KNOWN_UNITS = {
+    "g", "kg", "mg", "ml", "l",
+    "gramo", "gramos", "litro", "litros", "mililitro", "mililitros",
+    "cucharada", "cucharadas", "cucharadita", "cucharaditas",
+    "pellizco", "pellizcos", "sobre", "sobres",
+    "copa", "copas", "taza", "tazas", "vaso", "vasos", "chorrito", "chorritos",
+    "unidad", "unidades", "lata", "latas", "lata pequeña",
+    "colmada", "colmadas", "rasa", "rasas",
+    "rodaja", "rodajas", "loncha", "lonchas", "filete", "filetes",
+    "pieza", "piezas", "tira", "tiras",
+}
+
+
 def parse_ingredient_text(text: str) -> tuple:
     text = clean_html_fractions(text.strip())
     note = ""
@@ -127,18 +141,22 @@ def parse_ingredient_text(text: str) -> tuple:
     # range: "1 - 2 cucharadas de perejil"
     range_match = re.match(r"(\d+(?:[./]\d+)?)\s*-\s*(\d+(?:[./]\d+)?)\s+([a-zA-Záéíóúüñ]+)\s+(.+)$", text)
     if range_match:
-        qty = parse_qty(range_match.group(2))
-        unit = range_match.group(3)
-        name = clean_ingredient_name(range_match.group(4))
-        return name, qty, unit, note
+        unit = range_match.group(3).lower()
+        if unit in KNOWN_UNITS:
+            qty = parse_qty(range_match.group(2))
+            name = clean_ingredient_name(range_match.group(4))
+            return name, qty, unit, note
 
+    # simple: "1 cucharada de aceite"
     simple_match = re.match(r"(\d+(?:[./]\d+)?)\s*([a-zA-Záéíóúüñ]+)\s+(.+)$", text)
     if simple_match:
-        qty = parse_qty(simple_match.group(1))
-        unit = simple_match.group(2)
-        name = clean_ingredient_name(simple_match.group(3))
-        return name, qty, unit, note
+        unit = simple_match.group(2).lower()
+        if unit in KNOWN_UNITS:
+            qty = parse_qty(simple_match.group(1))
+            name = clean_ingredient_name(simple_match.group(3))
+            return name, qty, unit, note
 
+    # count: everything after qty is the ingredient name
     count_match = re.match(r"(\d+(?:[./]\d+)?)\s+(.+)$", text)
     if count_match:
         qty = parse_qty(count_match.group(1))
@@ -149,7 +167,7 @@ def parse_ingredient_text(text: str) -> tuple:
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def fetch_recipe_page(recipe_id: str, lang: str = "es-ES") -> dict | None:
+def fetch_recipe_page(recipe_id: str, lang: str = "es-ES") -> Optional[dict]:
     url = f"{BASE_URL}/recipes/recipe/{lang}/r{recipe_id}"
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
@@ -340,7 +358,7 @@ async def save_recipe(recipe_data: dict):
         return recipe
 
 
-async def scrape_recipes(languages: list[str] | None = None, limit: int = 0):
+async def scrape_recipes(languages: Optional[list[str]] = None, limit: int = 0):
     if languages is None:
         languages = ["es-ES"]
 

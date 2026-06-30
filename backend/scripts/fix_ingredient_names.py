@@ -1,6 +1,9 @@
 import re
+import sys
 import sqlite3
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 DB = Path(__file__).resolve().parent.parent / "cookidoo.db"
 
@@ -39,14 +42,23 @@ def clean(name: str) -> str:
     return name
 
 
+def reparse(raw_text: str) -> str:
+    from app.scraper.cookidoo import parse_ingredient_text
+    name, _, _, _ = parse_ingredient_text(raw_text)
+    return name
+
+
 def main():
     conn = sqlite3.connect(str(DB))
-    cur = conn.execute("SELECT id, ingredient_name FROM recipe_ingredients")
+    cur = conn.execute("SELECT id, ingredient_name, raw_text FROM recipe_ingredients")
     rows = cur.fetchall()
     fixed = 0
 
-    for row_id, name in rows:
-        cleaned = clean(name)
+    for row_id, name, raw in rows:
+        # First, parse from raw_text using current logic
+        parsed = reparse(raw)
+        # Then apply additional cleaning (the clean function)
+        cleaned = clean(parsed)
         if cleaned != name:
             conn.execute("UPDATE recipe_ingredients SET ingredient_name = ? WHERE id = ?", (cleaned, row_id))
             fixed += 1
