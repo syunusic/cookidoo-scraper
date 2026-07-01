@@ -400,19 +400,19 @@ async def search_by_ingredients(
 
     scored.sort(key=lambda x: (-x["distinct_matched"], -x["matched_ingredients"], x["total_ingredients"]))
 
-        return {
-            "results": [
-                {
-                    "recipe": {**r["recipe"], "ingredients": r["recipe_ingredients"]},
-                    "match_score": r["match_score"],
-                    "missing_ingredients": r["missing_ingredients"],
-                    "total_ingredients": r["total_ingredients"],
-                    "matched_ingredients": r["matched_ingredients"],
-                    "distinct_matched": r["distinct_matched"],
-                }
-                for r in scored[:limit]
-            ]
-        }
+    return {
+        "results": [
+            {
+                "recipe": {**r["recipe"], "ingredients": r["recipe_ingredients"]},
+                "match_score": r["match_score"],
+                "missing_ingredients": r["missing_ingredients"],
+                "total_ingredients": r["total_ingredients"],
+                "matched_ingredients": r["matched_ingredients"],
+                "distinct_matched": r["distinct_matched"],
+            }
+            for r in scored[:limit]
+        ]
+    }
 
 
 # ---------------------------------------------------------------------------
