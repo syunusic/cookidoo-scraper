@@ -36,18 +36,28 @@ cookidoo-scraper/
 │   │   ├── database.py            # Conexión SQLite asíncrona
 │   │   ├── models.py              # Modelos SQLAlchemy (Recipe, RecipeIngredient)
 │   │   ├── schemas.py             # Esquemas Pydantic para la API
+│   │   ├── matching.py            # Tokenización, stemming y fuzzy matching (compartido)
 │   │   ├── synonyms.json          # Mapa de sinónimos panhispánicos
+│   │   ├── vision.py              # Clasificación MobileNetV2 (opcional, degrada sin tensorflow)
+│   │   ├── google_vision.py       # Integración Google Cloud Vision (label/OCR)
 │   │   ├── routes/
 │   │   │   └── recipes.py         # Endpoints REST (/api/recipes/*)
 │   │   └── scraper/
 │   │       ├── cli.py             # Interfaz de línea de comandos
-│   │       ├── cookidoo.py        # Scraper público (sin login)
+│   │       ├── common.py          # Parsing/guardado compartido por ambos scrapers
+│   │       ├── cookidoo.py        # Scraper público (sin login) + limpieza de ingredientes
 │   │       └── playwright_auth.py # Scraper con login (Playwright)
+│   ├── alembic/                    # Migraciones de esquema
+│   ├── alembic.ini
+│   ├── tests/                      # pytest: matching, parsing, búsqueda
+│   ├── pytest.ini
 │   ├── scripts/
-│   │   └── fix_ingredient_names.py  # Migración: normaliza nombres viejos
+│   │   ├── fix_ingredient_names.py    # Migración: normaliza nombres viejos
+│   │   └── backfill_search_tokens.py  # Migración: precalcula tokens de búsqueda
 │   ├── cookidoo.db                # Base de datos SQLite
 │   ├── dist/                      # Frontend build (generado)
 │   ├── requirements.txt
+│   ├── requirements-dev.txt       # + pytest, pytest-asyncio, httpx
 │   └── deploy/
 │       └── cookidoo-api.service   # Systemd service
 ├── frontend/
@@ -101,6 +111,25 @@ python -m playwright install chromium
 ```bash
 cd frontend
 npm install
+```
+
+### Migraciones (Alembic)
+
+El esquema se gestiona con Alembic (además del `create_all` inicial para bases nuevas). Tras hacer `pull` de cambios que toquen `app/models.py`, aplica las migraciones pendientes:
+
+```bash
+source .venv/bin/activate
+cd backend
+alembic upgrade head
+```
+
+### Tests
+
+```bash
+source .venv/bin/activate
+cd backend
+pip install -r requirements-dev.txt
+pytest
 ```
 
 ## Cómo usar
@@ -157,7 +186,8 @@ python -m app.scraper.cli login-and-scrape --limit 200
 | GET | `/api/recipes/search?q=...` | Buscar recetas por ingredientes |
 | GET | `/api/recipes/` | Listar todas las recetas |
 | GET | `/api/recipes/{id}` | Detalle de receta con ingredientes |
-| GET | `/api/recipes/ingredients/suggest?q=...` | Autocompletado de ingredientes |
+| GET | `/api/recipes/ingredients/suggest?q=...` | Autocompletado de ingredientes (cacheado 10 min) |
+| POST | `/api/recipes/ingredients/recognize` | Reconocimiento de ingredientes por foto. Límite: 8 MB por imagen, 10 solicitudes/min por IP |
 
 ### Parámetros de búsqueda
 
@@ -178,6 +208,8 @@ python -m app.scraper.cli login-and-scrape --limit 200
 4. **Fuzzy fallback** con thefuzz para errores tipográficos
 5. **Expansión de sinónimos** desde `synonyms.json`
 6. **Ordena** por: más ingredientes del usuario aprovechados → mayor cobertura → receta más simple
+
+La lógica de matching vive en `app/matching.py`, compartida entre el scraper y el endpoint de búsqueda. Para evitar cargar las ~73,000 filas de ingredientes en cada búsqueda, el endpoint primero resuelve qué nombres *distintos* de ingrediente (~12,600) matchean la consulta, y usa eso para pre-filtrar en SQL (vía el índice de `ingredient_name`) qué recetas tienen alguna chance de matchear — solo esas se cargan completas para calcular el ranking. El ahorro depende de qué tan común sea el ingrediente buscado (una búsqueda de ingredientes poco comunes se resuelve en <1s; ingredientes muy comunes como huevo/harina siguen dejando un set de candidatos grande).
 
 ## Normalización de ingredientes
 
