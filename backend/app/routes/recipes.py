@@ -224,22 +224,25 @@ async def recognize_ingredients(
     if not contents:
         return {"ingredients": []}
 
-    from app.google_vision import is_available as gv_available
+    from app.google_vision import is_available as gv_available, detect_all as gv_detect_all
     loop = asyncio.get_event_loop()
 
-    if gv_available():
-        from app.google_vision import detect_all
-        with_text = mode == "text"
-        visual_future = loop.run_in_executor(None, detect_all, contents, with_text)
-        visual_results, raw_text = await visual_future
-    else:
-        visual_future = loop.run_in_executor(None, _classify_image, contents)
-        if mode == "text":
-            ocr_future = loop.run_in_executor(None, _ocr_image, contents)
-            visual_results, raw_text = await asyncio.gather(visual_future, ocr_future)
+    # Step 1: Always try MobileNetV2 first (free, local, fast)
+    visual_results = await loop.run_in_executor(None, _classify_image, contents)
+
+    # Step 2: OCR in text mode — try Google Vision OCR if available, else Tesseract
+    raw_text = None
+    if mode == "text":
+        if gv_available():
+            _, raw_text = await loop.run_in_executor(None, gv_detect_all, contents, True)
         else:
-            visual_results = await visual_future
-            raw_text = None
+            raw_text = await loop.run_in_executor(None, _ocr_image, contents)
+
+    # Step 3: If MobileNetV2 found nothing and Google Vision is available, use it for visual too
+    if not visual_results and gv_available():
+        gv_visual, _ = await loop.run_in_executor(None, gv_detect_all, contents, False)
+        if gv_visual:
+            visual_results = gv_visual
 
     matched = []
     seen_match = set()
