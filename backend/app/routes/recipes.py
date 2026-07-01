@@ -76,7 +76,7 @@ def ingredient_matches(ingredient_name: str, raw_text: str, user_tokens: set[str
             nt_stem = stem(nt)
             if ut_stem == nt_stem:
                 return True
-            if len(ut) > 3 and (ut in nt or nt in ut):
+            if min(len(ut), len(nt)) > 3 and (ut in nt or nt in ut):
                 return True
 
     # fuzzy fallback: check if the user token partially matches ingredient text
@@ -322,14 +322,19 @@ async def search_by_ingredients(
     if not user_ingredients:
         return {"results": []}
 
-    expanded = list(user_ingredients)
+    # Expand synonyms and build per-ingredient token sets
+    expanded_groups = []
     for ui in user_ingredients:
+        group = [ui]
         for syn in _synonyms.get(ui, []):
-            expanded.append(syn)
+            group.append(syn)
+        expanded_groups.append(group)
 
-    user_tokens = set()
-    for ui in expanded:
-        user_tokens.update(tokenize(ui))
+    # Combined token set for backward-compat total-match counting
+    all_tokens = set()
+    for group in expanded_groups:
+        for item in group:
+            all_tokens.update(tokenize(item))
 
     query = select(Recipe).options(selectinload(Recipe.ingredients))
     if language:
@@ -343,22 +348,23 @@ async def search_by_ingredients(
     scored = []
     for recipe in recipes:
         db_ingredients = recipe.ingredients
-
         if not db_ingredients:
             continue
 
-        matched = 0
+        total = len(db_ingredients)
+
+        # Count total ingredient-entry matches (backward compat)
+        total_matched = 0
         missing = []
         for ingredient in db_ingredients:
             name = ingredient.ingredient_name or ""
             raw = ingredient.raw_text or ""
-            if ingredient_matches(name, raw, user_tokens):
-                matched += 1
+            if ingredient_matches(name, raw, all_tokens):
+                total_matched += 1
             else:
                 missing.append(ingredient.raw_text)
 
-        total = len(db_ingredients)
-        if total == 0:
+        if total_matched == 0:
             continue
 
         n_missing = len(missing)
@@ -367,33 +373,46 @@ async def search_by_ingredients(
         if max_total is not None and total > max_total:
             continue
 
-        match_ratio = matched / total
-        if matched == 0:
-            continue
+        # Count distinct user ingredients matched (primary sort)
+        distinct_matched = 0
+        for group in expanded_groups:
+            group_tokens = set()
+            for item in group:
+                group_tokens.update(tokenize(item))
+            for ingredient in db_ingredients:
+                name = ingredient.ingredient_name or ""
+                raw = ingredient.raw_text or ""
+                if ingredient_matches(name, raw, group_tokens):
+                    distinct_matched += 1
+                    break
+
+        match_ratio = total_matched / total
 
         scored.append({
             "recipe": recipe_to_dict(recipe),
             "recipe_ingredients": [IngredientOut.model_validate(i) for i in db_ingredients],
-            "match_score": round(matched + match_ratio, 3),
+            "match_score": round(distinct_matched + match_ratio, 3),
             "missing_ingredients": missing,
             "total_ingredients": total,
-            "matched_ingredients": matched,
+            "matched_ingredients": total_matched,
+            "distinct_matched": distinct_matched,
         })
 
-    scored.sort(key=lambda x: (-x["matched_ingredients"], -x["match_score"], x["total_ingredients"]))
+    scored.sort(key=lambda x: (-x["distinct_matched"], -x["matched_ingredients"], x["total_ingredients"]))
 
-    return {
-        "results": [
-            {
-                "recipe": {**r["recipe"], "ingredients": r["recipe_ingredients"]},
-                "match_score": r["match_score"],
-                "missing_ingredients": r["missing_ingredients"],
-                "total_ingredients": r["total_ingredients"],
-                "matched_ingredients": r["matched_ingredients"],
-            }
-            for r in scored[:limit]
-        ]
-    }
+        return {
+            "results": [
+                {
+                    "recipe": {**r["recipe"], "ingredients": r["recipe_ingredients"]},
+                    "match_score": r["match_score"],
+                    "missing_ingredients": r["missing_ingredients"],
+                    "total_ingredients": r["total_ingredients"],
+                    "matched_ingredients": r["matched_ingredients"],
+                    "distinct_matched": r["distinct_matched"],
+                }
+                for r in scored[:limit]
+            ]
+        }
 
 
 # ---------------------------------------------------------------------------
