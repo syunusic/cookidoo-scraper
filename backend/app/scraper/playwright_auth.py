@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import time
@@ -7,17 +8,14 @@ from typing import Optional
 
 from playwright.sync_api import sync_playwright
 
-from app.database import async_session
-from app.models import Recipe, RecipeIngredient
-from app.scraper.cookidoo import parse_ingredient_text, parse_iso_duration, fetch_discoverable_ids
+from app.scraper.cookidoo import fetch_discoverable_ids, get_country_from_lang
+from app.scraper.common import HEADERS, parse_recipe_html, save_recipe
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://cookidoo.es"
 COOKIE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".cookidoo_cookies.json")
 RECIPE_ID_PATTERN = re.compile(r"/recipes/recipe/([^/]+)/r(\d+)")
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-}
 
 
 def login(email: str, password: str) -> list[dict]:
@@ -30,7 +28,7 @@ def login(email: str, password: str) -> list[dict]:
         )
         page = context.new_page()
 
-        print("Navigating to login page...")
+        logger.info("Navigating to login page...")
         page.goto(f"{BASE_URL}/profile/es-ES/login?redirectAfterLogin=%2Ffoundation%2Fes-ES%2Fexplore", wait_until="networkidle")
 
         # Wait for the login form to be ready
@@ -46,21 +44,21 @@ def login(email: str, password: str) -> list[dict]:
         # Wait for navigation after login (redirect to explore page)
         try:
             page.wait_for_url("**/foundation/es-ES/**", timeout=20000)
-            print("Login successful!")
+            logger.info("Login successful!")
         except:
             # Check for error messages
             error_text = page.text_content("text=error", timeout=3000)
             if error_text:
-                print(f"Login error: {error_text}")
+                logger.error("Login error: %s", error_text)
             else:
-                print(f"Current URL after login: {page.url}")
+                logger.warning("Current URL after login: %s", page.url)
             return []
 
         # Save cookies
         cookies = context.cookies()
         with open(COOKIE_FILE, "w") as f:
             json.dump(cookies, f)
-        print(f"Saved {len(cookies)} cookies to {COOKIE_FILE}")
+        logger.info("Saved %d cookies to %s", len(cookies), COOKIE_FILE)
 
         # Also save the localStorage/sessionStorage for API tokens
         storage_state = context.storage_state()
@@ -97,7 +95,7 @@ def _discover_from_search(page, sortby: str, max_scrolls: int = 20) -> set[str]:
         f"{BASE_URL}/search/es-ES?"
         f"countries=es&languages=es&context=recipes&sortby={sortby}"
     )
-    print(f"  Searching sortby={sortby}...")
+    logger.info("  Searching sortby=%s...", sortby)
     page.goto(search_url, wait_until="networkidle")
     page.wait_for_timeout(3000)
 
@@ -124,7 +122,7 @@ def _discover_from_search(page, sortby: str, max_scrolls: int = 20) -> set[str]:
 
         added = len(ids) - prev_count
         if added > 0:
-            print(f"    Scroll {scroll + 1}: {len(ids)} recipes found (+{added})")
+            logger.info("    Scroll %d: %d recipes found (+%d)", scroll + 1, len(ids), added)
         prev_count = len(ids)
 
         if added == 0 and scroll > 2:
@@ -182,11 +180,11 @@ def discover_recipe_ids(max_scrolls: int = 20) -> set[str]:
             sort_ids = _discover_from_search(page, sortby, max_scrolls)
             before = len(ids)
             ids |= sort_ids
-            print(f"    -> +{len(ids) - before} new recipes")
+            logger.info("    -> +%d new recipes", len(ids) - before)
 
         # Also browse collections for more IDs
         col_url = f"{BASE_URL}/search/es-ES?countries=es&context=collections&sortby=publishedAt"
-        print(f"  Browsing collections...")
+        logger.info("  Browsing collections...")
         page.goto(col_url, wait_until="networkidle")
         page.wait_for_timeout(3000)
 
@@ -199,7 +197,7 @@ def discover_recipe_ids(max_scrolls: int = 20) -> set[str]:
                 if col_id and col_id not in seen_cols:
                     seen_cols.add(col_id)
 
-        print(f"  Found {len(seen_cols)} collections")
+        logger.info("  Found %d collections", len(seen_cols))
         for col_id in list(seen_cols)[:50]:
             try:
                 page.goto(f"{BASE_URL}/collection/es-ES/p/{col_id}", wait_until="networkidle")
@@ -211,21 +209,19 @@ def discover_recipe_ids(max_scrolls: int = 20) -> set[str]:
                         m = RECIPE_ID_PATTERN.search(href)
                         if m:
                             ids.add(m.group(2))
-                print(f"    Collection {col_id}: {len(ids)} total recipes")
+                logger.info("    Collection %s: %d total recipes", col_id, len(ids))
             except Exception:
                 continue
 
         browser.close()
 
-    print(f"Total unique recipe IDs discovered: {len(ids)}")
+    logger.info("Total unique recipe IDs discovered: %d", len(ids))
     return ids
 
 
 def scrape_recipe_page(recipe_id: str, lang: str = "es-ES") -> Optional[dict]:
     """Scrape a single recipe page using authenticated session."""
     import requests
-    from bs4 import BeautifulSoup
-    import json
 
     session = get_authenticated_session()
     url = f"{BASE_URL}/recipes/recipe/{lang}/r{recipe_id}"
@@ -236,149 +232,38 @@ def scrape_recipe_page(recipe_id: str, lang: str = "es-ES") -> Optional[dict]:
     except requests.RequestException:
         return None
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    json_ld = soup.find("script", type="application/ld+json")
-    if not json_ld:
-        return None
-
-    try:
-        data = json.loads(json_ld.string)
-    except (json.JSONDecodeError, AttributeError):
-        return None
-
-    if not data.get("name"):
-        return None
-
-    difficulty_el = soup.find("rdp-difficulty")
-    difficulty = ""
-    if difficulty_el:
-        p = difficulty_el.find("p")
-        if p:
-            difficulty = p.get_text(strip=True)
-
-    categories_raw = data.get("recipeCategory", [])
-    if isinstance(categories_raw, str):
-        categories_raw = [categories_raw]
-
-    nutrition = data.get("nutrition", {})
-
-    result = {
-        "cookidoo_id": f"r{recipe_id}",
-        "name": data.get("name"),
-        "url": url,
-        "image_url": data.get("image", ""),
-        "language": lang,
-        "country": lang.split("-")[0] if "-" in lang else lang,
-        "total_time": parse_iso_duration(data.get("totalTime")),
-        "prep_time": parse_iso_duration(data.get("prepTime")),
-        "cook_time": parse_iso_duration(data.get("cookTime")),
-        "yield_amount": data.get("recipeYield"),
-        "difficulty": difficulty,
-        "rating": None,
-        "review_count": None,
-        "categories": categories_raw,
-        "calories": nutrition.get("calories"),
-        "carbs": nutrition.get("carbohydrateContent"),
-        "fat": nutrition.get("fatContent"),
-        "protein": nutrition.get("proteinContent"),
-        "fiber": nutrition.get("fiberContent"),
-        "raw_json": data,
-        "ingredients_raw": data.get("recipeIngredient", []),
-    }
-
-    # Extract aggregate rating from JSON-LD
-    for script in soup.find_all("script", type="application/ld+json"):
-        try:
-            agg = json.loads(script.string)
-            if isinstance(agg, dict) and agg.get("@type") == "AggregateRating":
-                result["rating"] = agg.get("ratingValue")
-                result["review_count"] = agg.get("reviewCount")
-                break
-        except (json.JSONDecodeError, AttributeError):
-            continue
-
-    return result
-
-
-
-
-
-async def save_recipe(recipe_data: dict):
-    from sqlalchemy import select
-    async with async_session() as session:
-        q = select(Recipe).where(Recipe.cookidoo_id == recipe_data["cookidoo_id"])
-        r = await session.execute(q)
-        existing = r.scalar_one_or_none()
-        if existing:
-            return existing
-
-        recipe = Recipe(
-            cookidoo_id=recipe_data["cookidoo_id"],
-            name=recipe_data["name"],
-            url=recipe_data["url"],
-            image_url=recipe_data.get("image_url", ""),
-            language=recipe_data.get("language", "es-ES"),
-            country=recipe_data.get("country", "es"),
-            total_time=recipe_data.get("total_time"),
-            prep_time=recipe_data.get("prep_time"),
-            cook_time=recipe_data.get("cook_time"),
-            yield_amount=recipe_data.get("yield_amount"),
-            difficulty=recipe_data.get("difficulty"),
-            rating=recipe_data.get("rating"),
-            review_count=recipe_data.get("review_count"),
-            categories=recipe_data.get("categories"),
-            calories=recipe_data.get("calories"),
-            carbs=recipe_data.get("carbs"),
-            fat=recipe_data.get("fat"),
-            protein=recipe_data.get("protein"),
-            fiber=recipe_data.get("fiber"),
-            raw_json=recipe_data.get("raw_json"),
-        )
-        session.add(recipe)
-        await session.flush()
-
-        for raw_ing in recipe_data.get("ingredients_raw", []):
-            name, qty, unit, note = parse_ingredient_text(raw_ing)
-            ingredient = RecipeIngredient(
-                recipe_id=recipe.id,
-                raw_text=raw_ing,
-                ingredient_name=name or raw_ing,
-                quantity=qty,
-                unit=unit,
-                note=note,
-            )
-            session.add(ingredient)
-
-        await session.commit()
-        return recipe
+    return parse_recipe_html(resp.text, url, recipe_id, lang, get_country_from_lang(lang))
 
 
 async def scrape_all(limit: int = 0):
     import asyncio
     from sqlalchemy import select
 
+    from app.database import async_session
+    from app.models import Recipe
+
     # Fast discovery via requests-based stripe API (~12 calls, ~10s)
     # No need for slow Playwright browser — auth is only needed for the
     # actual recipe page scraping.
     loop = asyncio.get_running_loop()
     ids = await loop.run_in_executor(None, fetch_discoverable_ids)
-    print(f"\nDiscovered {len(ids)} total recipe IDs")
+    logger.info("Discovered %d total recipe IDs", len(ids))
 
     # Load existing IDs from DB to skip them
     async with async_session() as session:
         r = await session.execute(select(Recipe.cookidoo_id))
         existing = {row[0] for row in r.all()}
-    print(f"Already in DB: {len(existing)} recipes")
+    logger.info("Already in DB: %d recipes", len(existing))
 
     existing_numeric = {rid.lstrip("r") for rid in existing}
     new_ids = sorted(set(ids) - existing_numeric)
-    print(f"New recipes to scrape: {len(new_ids)}")
+    logger.info("New recipes to scrape: %d", len(new_ids))
 
     if limit > 0:
         new_ids = new_ids[:limit]
 
     if not new_ids:
-        print("Nothing new to scrape.")
+        logger.info("Nothing new to scrape.")
         return 0
 
     count = 0
@@ -387,9 +272,9 @@ async def scrape_all(limit: int = 0):
         if data:
             await save_recipe(data)
             count += 1
-            print(f"[{i+1}/{len(new_ids)}] {data['name']}")
+            logger.info("[%d/%d] %s", i + 1, len(new_ids), data["name"])
         else:
-            print(f"[{i+1}/{len(new_ids)}] r{recipe_id} -> FAILED")
+            logger.warning("[%d/%d] r%s -> FAILED", i + 1, len(new_ids), recipe_id)
         time.sleep(random.uniform(1, 2))
 
     return count

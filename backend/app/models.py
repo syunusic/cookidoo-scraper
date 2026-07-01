@@ -44,5 +44,6 @@ class RecipeIngredient(Base):
     unit = Column(String)
     note = Column(String)
     is_alternative = Column(Integer, default=0)
+    search_tokens = Column(JSON)
 
     recipe = relationship("Recipe", back_populates="ingredients")

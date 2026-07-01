@@ -12,3 +12,5 @@ thefuzz
 python-Levenshtein
 pytesseract
 Pillow
+numpy
+tensorflow

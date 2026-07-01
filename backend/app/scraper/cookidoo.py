@@ -1,23 +1,17 @@
+import logging
 import re
-import json
 import time
 import random
 from typing import Optional
-from urllib.parse import urljoin
 
 import requests
-from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from app.database import async_session
-from app.models import Recipe, RecipeIngredient
+from app.scraper.common import HEADERS, parse_recipe_html, save_recipe
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://cookidoo.es"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-}
 
 RECIPE_ID_PATTERN = re.compile(r"/recipes/recipe/([^/]+)/r(\d+)")
 
@@ -175,78 +169,7 @@ def fetch_recipe_page(recipe_id: str, lang: str = "es-ES") -> Optional[dict]:
     except requests.RequestException:
         return None
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    json_ld = soup.find("script", type="application/ld+json")
-    if not json_ld:
-        return None
-
-    try:
-        data = json.loads(json_ld.string)
-    except (json.JSONDecodeError, AttributeError):
-        return None
-
-    if not data.get("name"):
-        return None
-
-    difficulty_el = soup.find("rdp-difficulty")
-    difficulty = ""
-    if difficulty_el:
-        p = difficulty_el.find("p")
-        if p:
-            difficulty = p.get_text(strip=True)
-
-    categories_raw = data.get("recipeCategory", [])
-    if isinstance(categories_raw, str):
-        categories_raw = [categories_raw]
-
-    nutrition = data.get("nutrition", {})
-
-    result = {
-        "cookidoo_id": f"r{recipe_id}",
-        "name": data.get("name"),
-        "url": url,
-        "image_url": data.get("image", ""),
-        "language": lang,
-        "country": get_country_from_lang(lang),
-        "total_time": parse_iso_duration(data.get("totalTime")),
-        "prep_time": parse_iso_duration(data.get("prepTime")),
-        "cook_time": parse_iso_duration(data.get("cookTime")),
-        "yield_amount": data.get("recipeYield"),
-        "difficulty": difficulty,
-        "rating": None,
-        "review_count": None,
-        "categories": categories_raw,
-        "calories": nutrition.get("calories"),
-        "carbs": nutrition.get("carbohydrateContent"),
-        "fat": nutrition.get("fatContent"),
-        "protein": nutrition.get("proteinContent"),
-        "fiber": nutrition.get("fiberContent"),
-        "raw_json": data,
-        "ingredients_raw": data.get("recipeIngredient", []),
-    }
-
-    aggregate = soup.find("script", type="application/ld+json")
-    if aggregate:
-        try:
-            agg_data = json.loads(aggregate.string)
-            if isinstance(agg_data, dict) and agg_data.get("@type") == "AggregateRating":
-                result["rating"] = agg_data.get("ratingValue")
-                result["review_count"] = agg_data.get("reviewCount")
-        except (json.JSONDecodeError, AttributeError):
-            pass
-
-    all_scripts = soup.find_all("script", type="application/ld+json")
-    for script in all_scripts:
-        try:
-            agg_data = json.loads(script.string)
-            if isinstance(agg_data, dict) and agg_data.get("@type") == "AggregateRating":
-                result["rating"] = agg_data.get("ratingValue")
-                result["review_count"] = agg_data.get("reviewCount")
-                break
-        except (json.JSONDecodeError, AttributeError):
-            continue
-
-    return result
+    return parse_recipe_html(resp.text, url, recipe_id, lang, get_country_from_lang(lang))
 
 
 SORTBY_GROUPS = ["publishedAt", "rating", "name", "totalTime"]
@@ -286,62 +209,12 @@ def fetch_discoverable_ids(
                     for lang, rid in found:
                         ids.add(rid)
                     new = len(ids) - prev
-                    print(f"  {locale}/{country} sortby={sortby}: {len(found)} recipes (+{new} new)")
+                    logger.info("  %s/%s sortby=%s: %d recipes (+%d new)", locale, country, sortby, len(found), new)
             except requests.RequestException:
-                print(f"  {locale}/{country} sortby={sortby}: FAILED")
+                logger.warning("  %s/%s sortby=%s: FAILED", locale, country, sortby)
             time.sleep(random.uniform(0.2, 0.5))
 
     return sorted(ids)
-
-
-async def save_recipe(recipe_data: dict):
-    async with async_session() as session:
-        from sqlalchemy import select
-        q = select(Recipe).where(Recipe.cookidoo_id == recipe_data["cookidoo_id"])
-        r = await session.execute(q)
-        existing = r.scalar_one_or_none()
-        if existing:
-            return existing
-
-        recipe = Recipe(
-            cookidoo_id=recipe_data["cookidoo_id"],
-            name=recipe_data["name"],
-            url=recipe_data["url"],
-            image_url=recipe_data.get("image_url", ""),
-            language=recipe_data.get("language", "es-ES"),
-            country=recipe_data.get("country", "es"),
-            total_time=recipe_data.get("total_time"),
-            prep_time=recipe_data.get("prep_time"),
-            cook_time=recipe_data.get("cook_time"),
-            yield_amount=recipe_data.get("yield_amount"),
-            difficulty=recipe_data.get("difficulty"),
-            rating=recipe_data.get("rating"),
-            review_count=recipe_data.get("review_count"),
-            categories=recipe_data.get("categories"),
-            calories=recipe_data.get("calories"),
-            carbs=recipe_data.get("carbs"),
-            fat=recipe_data.get("fat"),
-            protein=recipe_data.get("protein"),
-            fiber=recipe_data.get("fiber"),
-            raw_json=recipe_data.get("raw_json"),
-        )
-        session.add(recipe)
-        await session.flush()
-
-        for raw_ing in recipe_data.get("ingredients_raw", []):
-            name, qty, unit, note = parse_ingredient_text(raw_ing)
-            ingredient = RecipeIngredient(
-                recipe_id=recipe.id,
-                raw_text=raw_ing,
-                ingredient_name=name or raw_ing,
-                quantity=qty,
-                unit=unit,
-                note=note,
-            )
-            session.add(ingredient)
-
-        await session.commit()
-        return recipe
 
 
 async def scrape_recipes(languages: Optional[list[str]] = None, limit: int = 0):

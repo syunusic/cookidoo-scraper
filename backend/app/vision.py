@@ -1,9 +1,18 @@
 import io
+import logging
 from pathlib import Path
 
-import numpy as np
-import tensorflow as tf
 from PIL import Image
+
+logger = logging.getLogger(__name__)
+
+try:
+    import numpy as np
+    import tensorflow as tf
+    TF_AVAILABLE = True
+except ImportError:
+    logger.warning("tensorflow/numpy not installed — MobileNetV2 classification disabled")
+    TF_AVAILABLE = False
 
 # ImageNet food classes → ingredient names
 FOOD_MAP = {
@@ -180,12 +189,17 @@ _model = None
 
 def _get_model():
     global _model
+    if not TF_AVAILABLE:
+        return None
     if _model is None:
         _model = tf.keras.applications.MobileNetV2(weights="imagenet", input_shape=(224, 224, 3))
     return _model
 
 
 def classify_image(image_bytes: bytes, top_k: int = 5):
+    if not TF_AVAILABLE:
+        return []
+
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img = img.resize((224, 224))
     arr = tf.keras.preprocessing.image.img_to_array(img)

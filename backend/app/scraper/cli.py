@@ -1,4 +1,6 @@
 import asyncio
+import logging
+
 import click
 
 from app.database import init_db
@@ -8,7 +10,7 @@ from app.scraper.cookidoo import scrape_recipes, scrape_single_recipe
 @click.group()
 def cli():
     """Cookidoo Recipe Scraper"""
-    pass
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 @cli.command()
