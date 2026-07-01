@@ -68,6 +68,20 @@ export default function RecipeList({ results, onRecipeClick, onBack }) {
         </div>
       )}
 
+      {filtered.length === 0 && (
+        <div className="text-center py-12 bg-white rounded-2xl shadow">
+          <p className="text-gray-500">
+            Ninguna receta encontrada tiene esas categorías.
+          </p>
+          <button
+            onClick={() => setSelectedCats([])}
+            className="mt-3 text-orange-500 hover:text-orange-700 font-medium"
+          >
+            Quitar filtro de categoría
+          </button>
+        </div>
+      )}
+
       <div className="space-y-3">
         {filtered.map((result) => {
           const r = result.recipe
