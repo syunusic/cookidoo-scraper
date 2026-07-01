@@ -18,7 +18,7 @@ UNIT_WORDS = re.compile(
     re.IGNORECASE,
 )
 TRAILING_MODIFIERS = re.compile(
-    r"\s+(rallada|rallado|ralladas|rallados|tostado|tostada|tostados|tostadas|fresco|fresca|frescos|frescas|molida|molidos|molidas|triturado|triturada|triturados|trituradas|picado|picada|picados|picadas|congelado|congelada|congelados|congeladas|desalado|desalada|desalados|desaladas|ahumado|ahumada|ahumados|ahumadas|remojado|remojada|remojados|remojadas|deshuesado|deshuesada|en\s+salazón)$",
+    r"\s+(rallada|rallado|ralladas|rallados|tostado|tostada|tostados|tostadas|fresco|fresca|frescos|frescas|molida|molidos|molidas|moída|moídas|triturado|triturada|triturados|trituradas|picado|picada|picados|picadas|congelado|congelada|congelados|congeladas|desalado|desalada|desalados|desaladas|ahumado|ahumada|ahumados|ahumadas|remojado|remojada|remojados|remojadas|deshuesado|deshuesada|en\s+salazón)$",
     re.IGNORECASE,
 )
 
