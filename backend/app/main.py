@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,24 +11,33 @@ from fastapi.staticfiles import StaticFiles
 from app.database import init_db
 from app.routes.recipes import router as recipes_router
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    # Pre-warm vision model in a thread (download weights on startup, not on first request)
-    import asyncio
-    from app.vision import _get_model
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, _get_model)
+    # Pre-warm vision model in a thread (download weights on startup, not on first request).
+    # Optional dependency: the app must still start if tensorflow isn't installed.
+    from app.vision import TF_AVAILABLE, _get_model
+    if TF_AVAILABLE:
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, _get_model)
+    else:
+        logger.warning("Skipping MobileNetV2 warm-up — tensorflow not available")
     yield
 
 
 app = FastAPI(title="Cookidoo Recipe Finder", lifespan=lifespan)
 
+# This API is public and stateless (no cookies/auth), so it's served to any
+# origin. allow_credentials must stay False: browsers reject the
+# allow_origins=["*"] + allow_credentials=True combination outright, and
+# nothing here relies on cookies/credentialed requests anyway.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
