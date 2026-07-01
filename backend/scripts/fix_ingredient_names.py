@@ -1,49 +1,22 @@
-import re
 import sys
 import sqlite3
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-DB = Path(__file__).resolve().parent.parent / "cookidoo.db"
+from app.scraper.cookidoo import clean_ingredient_name, parse_ingredient_text  # noqa: E402
 
-LEADING_PREPOSITIONS = re.compile(r"^(de\s+(la\s+|las\s+|los\s+)?|del\s+|en\s+|con\s+|sin\s+|al\s+)")
-LEADING_NUMBER = re.compile(r"^[\d]+(?:/[\d]+)?\s*-\s*[\d]*(?:/[\d]*)?\s*|^-\s*[\d]+\s*")
-PREP_WORDS = re.compile(
-    r"^(copos|cubitos|hojas|ramitas|ramas|tallos|hebras|pipas|dientes|trozos|piezas|tiras|láminas|laminas|rodajas|rebanadas|lonchas|filetes|rallado|triturado|picado|molido|troceado|cortado|laminado|entero)\s+de\s+",
-    re.IGNORECASE,
-)
-UNIT_WORDS = re.compile(
-    r"^(cucharada|cucharadas|cucharadita|cucharaditas|pellizco|pellizcos|gramo|gramos|g|litro|litros|mililitro|mililitros|copa|copas|taza|tazas|vaso|vasos|chorrito|chorritos|ramita|ramitas|sobre|sobres|colmada|colmadas)\s+de\s+",
-    re.IGNORECASE,
-)
-TRAILING_MODIFIERS = re.compile(
-    r"\s+(rallada|rallado|ralladas|rallados|tostado|tostada|tostados|tostadas|fresco|fresca|frescos|frescas|molido|molida|molidos|molidas|moído|moída|moídas|triturado|triturada|triturados|trituradas|picado|picada|picados|picadas|congelado|congelada|congelados|congeladas|desalado|desalada|desalados|desaladas|ahumado|ahumada|ahumados|ahumadas|remojado|remojada|remojados|remojadas|deshuesado|deshuesada|en\s+salazón)$",
-    re.IGNORECASE,
-)
+DB = Path(__file__).resolve().parent.parent / "cookidoo.db"
 
 
 def clean(name: str) -> str:
-    name = name.strip()
-    name = LEADING_PREPOSITIONS.sub("", name).strip()
-    name = LEADING_NUMBER.sub("", name).strip()
-    m = PREP_WORDS.match(name)
-    if m:
-        name = name[m.end():].strip()
-    m = UNIT_WORDS.match(name)
-    if m:
-        name = name[m.end():].strip()
-    prev = None
-    while prev != name:
-        prev = name
-        name = TRAILING_MODIFIERS.sub("", name).strip()
-        name = re.sub(r"\s+y(?:\s+\w+)?$", "", name).strip()
-    name = re.sub(r"\s+", " ", name)
-    return name
+    # Delegates to app.scraper.cookidoo so this script can't drift from the
+    # scraper's own cleaning rules (TRAILING_MODIFIERS etc. used to be
+    # duplicated here and had gone out of sync in the past).
+    return clean_ingredient_name(name)
 
 
 def reparse(raw_text: str) -> str:
-    from app.scraper.cookidoo import parse_ingredient_text
     name, _, _, _ = parse_ingredient_text(raw_text)
     return name
 
