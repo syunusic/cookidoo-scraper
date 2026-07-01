@@ -4,7 +4,7 @@ Scraper y buscador de recetas de [Cookidoo](https://cookidoo.es) (la plataforma 
 
 ## Funcionalidades
 
-- **Scraper de recetas**: Navega Cookidoo y extrae nombre, ingredientes, tiempos, dificultad, valoración, información nutricional y más.
+- **Scraper de recetas**: Descubre recetas usando múltiples combinaciones de ordenamiento/locale vía API REST, y extrae nombre, ingredientes, tiempos, dificultad, valoración, información nutricional y más con Playwright.
 - **Búsqueda por ingredientes**: Ingresa los ingredientes que tienes y encuentra recetas ordenadas por las que más usan tus ingredientes.
 - **Matching inteligente**: Stemmer en español + fuzzy matching con thefuzz para tolerar errores tipográficos y variaciones (huevo ≈ huevos, tomate ≈ tomates, aroz ≈ arroz).
 - **Sinónimos panhispánicos**: palta ≈ aguacate, patatas ≈ papas, maíz ≈ choclo ≈ elote, etc.
@@ -31,7 +31,7 @@ Scraper y buscador de recetas de [Cookidoo](https://cookidoo.es) (la plataforma 
 cookidoo-scraper/
 ├── backend/
 │   ├── app/
-│   │   ├── __init__.py            # Versión de la app
+│   │   ├── __init__.py            # Versión de la app (single source of truth)
 │   │   ├── main.py                # Servidor FastAPI (puerto 8000)
 │   │   ├── database.py            # Conexión SQLite asíncrona
 │   │   ├── models.py              # Modelos SQLAlchemy (Recipe, RecipeIngredient)
@@ -67,6 +67,7 @@ cookidoo-scraper/
 │   ├── vite.config.js
 │   ├── package.json
 │   └── postcss.config.js
+├── bump-version.sh                 # Script: bump versión + rebuild frontend + restart service
 └── README.md
 ```
 
@@ -152,7 +153,7 @@ python -m app.scraper.cli login-and-scrape --limit 200
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/api/health` | Health check + versión |
+| GET | `/api/health` | Health check + versión + conteo de recetas |
 | GET | `/api/recipes/search?q=...` | Buscar recetas por ingredientes |
 | GET | `/api/recipes/` | Listar todas las recetas |
 | GET | `/api/recipes/{id}` | Detalle de receta con ingredientes |
@@ -166,6 +167,8 @@ python -m app.scraper.cli login-and-scrape --limit 200
 | `language` | string | — | Filtrar por idioma (ej. `es-ES`) |
 | `country` | string | — | Filtrar por país (ej. `es`) |
 | `limit` | int | 20 | Máximo resultados |
+| `max_missing` | int | — | Máx. ingredientes faltantes permitidos |
+| `max_total` | int | — | Máx. ingredientes totales en la receta |
 
 ## Algoritmo de matching
 
