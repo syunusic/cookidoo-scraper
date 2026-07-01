@@ -71,9 +71,8 @@
   "gambas": ["camarones", "langostinos"],
   "camarones": ["gambas", "langostinos"],
   "langostinos": ["gambas", "camarones"],
-  "carne molida": ["carne picada", "carne molida de res", "carne molida de cerdo", "carne molida de vaca"],
-  "carne picada": ["carne molida", "carne molida de res", "carne molida de cerdo", "carne molida de vaca"],
+  "carne molida": ["carne picada", "carne molida de res", "carne molida de vaca"],
+  "carne picada": ["carne molida", "carne molida de res", "carne molida de vaca"],
   "carne molida de res": ["carne molida", "carne picada"],
-  "carne molida de cerdo": ["carne molida", "carne picada"],
   "carne molida de vaca": ["carne molida", "carne picada"]
 }
