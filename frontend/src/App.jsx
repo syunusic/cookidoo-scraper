@@ -11,6 +11,7 @@ export default function App() {
   const [error, setError] = useState(null)
   const [version, setVersion] = useState('')
   const [recipeCount, setRecipeCount] = useState(null)
+  const [ingredients, setIngredients] = useState([])
 
   useEffect(() => {
     fetch('/api/health')
@@ -22,7 +23,8 @@ export default function App() {
       .catch(() => {})
   }, [])
 
-  const handleSearch = async (ingredients, options) => {
+  const handleSearch = async (options) => {
+    if (ingredients.length === 0) return
     setLoading(true)
     setError(null)
     setSelectedRecipe(null)
@@ -59,9 +61,13 @@ export default function App() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6">
-        {!selectedRecipe && (
-          <IngredientSearch onSearch={handleSearch} loading={loading} />
-        )}
+        <IngredientSearch
+          ingredients={ingredients}
+          setIngredients={setIngredients}
+          onSearch={handleSearch}
+          loading={loading}
+          collapsed={!!selectedRecipe}
+        />
 
         {error && (
           <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">

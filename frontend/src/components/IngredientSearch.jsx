@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { suggestIngredients } from '../api'
 
-export default function IngredientSearch({ onSearch, loading }) {
+export default function IngredientSearch({ ingredients, setIngredients, onSearch, loading, collapsed }) {
   const [input, setInput] = useState('')
-  const [ingredients, setIngredients] = useState([])
   const [suggestions, setSuggestions] = useState([])
   const [selectedSuggestion, setSelectedSuggestion] = useState(-1)
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -60,6 +59,8 @@ export default function IngredientSearch({ onSearch, loading }) {
     setIngredients(prev => prev.filter((_, i) => i !== index))
   }
 
+  if (collapsed) return null
+
   const handleKeyDown = (e) => {
     if (showSuggestions) {
       if (e.key === 'ArrowDown') {
@@ -95,7 +96,7 @@ export default function IngredientSearch({ onSearch, loading }) {
     const options = {}
     if (filterMissing) options.maxMissing = maxMissing
     if (filterTotal) options.maxTotal = maxTotal
-    onSearch(ingredients, options)
+    onSearch(options)
   }
 
   return (

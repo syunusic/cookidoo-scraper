@@ -51,8 +51,7 @@ def tokenize(text: str) -> set[str]:
 
 
 def ingredient_matches(ingredient_name: str, raw_text: str, user_tokens: set[str]) -> bool:
-    combined = f"{ingredient_name} {raw_text}"
-    name_tokens = tokenize(combined)
+    name_tokens = tokenize(ingredient_name)
 
     for ut in user_tokens:
         ut_stem = stem(ut)
@@ -65,7 +64,7 @@ def ingredient_matches(ingredient_name: str, raw_text: str, user_tokens: set[str
 
     # fuzzy fallback: check if the user token partially matches ingredient text
     user_phrase = " ".join(sorted(user_tokens))
-    ing_phrase = normalize(combined)
+    ing_phrase = normalize(ingredient_name)
     if fuzz.token_set_ratio(user_phrase, ing_phrase) > 75:
         return True
 
