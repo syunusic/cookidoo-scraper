@@ -1,9 +1,12 @@
+import io
 import json
 import re
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+import pytesseract
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from PIL import Image, ImageFilter, ImageOps
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +25,20 @@ if _syn_path.is_file():
         _synonyms = json.load(_f)
 
 STOP_WORDS = {"de", "del", "la", "el", "los", "las", "un", "una", "y", "e", "con", "al", "en", "sin", "para", "por"}
+
+# Packaging/non-ingredient words commonly read by OCR that should be excluded
+NON_INGREDIENT_WORDS = {
+    "reciclable", "calorias", "calorías", "grasas", "saturadas", "sodio",
+    "neto", "cont", "neto", "envase", "envases", "producto", "ingredientes",
+    "informacion", "información", "nutricional", "porcion", "porción",
+    "conservacion", "conservación", "caducidad", "lote", "fecha",
+    "consumir", "preferentemente", "peso", "neto", "escurrido",
+    "fabricado", "distribuido", "importado", "exportado", "content",
+    "net", "ingredients", "nutrition", "serving", "contains", "may",
+    "soprole", "untable", "belatina", "southwes", "alberto",
+    "rullons", "canta", "enca", "portalo", "comerc", "banpogo",
+    "u415662", "cinta", "enmasca",
+}
 
 
 def normalize(text: str) -> str:
@@ -146,6 +163,141 @@ async def suggest_ingredients(
 
     combined = prefix_matches + fuzzy_matches
     return {"suggestions": [r[0] for r in combined[:limit]]}
+
+
+# ---------------------------------------------------------------------------
+# Photo recognition
+# ---------------------------------------------------------------------------
+
+import asyncio
+
+
+def _ocr_image(image_bytes: bytes) -> str:
+    img = Image.open(io.BytesIO(image_bytes))
+    img = ImageOps.exif_transpose(img) or img
+    # upscale small images for better OCR
+    w, h = img.size
+    if w < 800 or h < 600:
+        scale = max(800 / w, 600 / h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+    img = img.convert("L")
+    img = img.filter(ImageFilter.SHARPEN)
+    img = ImageOps.autocontrast(img, cutoff=5)
+    # binarize
+    img = img.point(lambda x: 0 if x < 128 else 255)
+    text = pytesseract.image_to_string(img, lang="spa+eng", config="--psm 6 --oem 3")
+    return text
+
+
+def _extract_candidates(text: str) -> list[str]:
+    candidates = set()
+    for line in text.splitlines():
+        line = line.strip().lower()
+        if not line or len(line) < 3:
+            continue
+        parts = re.split(r"[,;/|()]+", line)
+        for part in parts:
+            part = part.strip()
+            part = re.sub(r"[^a-záéíóúüñ0-9 ]", " ", part)
+            part = re.sub(r"\s+", " ", part).strip()
+            if len(part) > 1:
+                candidates.add(part)
+        # Only keep single words that are >= 4 chars AND look Spanish-like
+        for word in re.findall(r"[a-záéíóúüñ]+", line):
+            if len(word) > 3:
+                candidates.add(word)
+    return list(candidates)
+
+
+def _classify_image(image_bytes: bytes):
+    from app.vision import classify_image
+    return classify_image(image_bytes)
+
+
+@router.post("/ingredients/recognize")
+async def recognize_ingredients(
+    file: UploadFile = File(...),
+    mode: str = Query("visual", pattern="^(visual|text)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    contents = await file.read()
+    if not contents:
+        return {"ingredients": []}
+
+    from app.google_vision import is_available as gv_available
+    loop = asyncio.get_event_loop()
+
+    if gv_available():
+        from app.google_vision import detect_all
+        with_text = mode == "text"
+        visual_future = loop.run_in_executor(None, detect_all, contents, with_text)
+        visual_results, raw_text = await visual_future
+    else:
+        visual_future = loop.run_in_executor(None, _classify_image, contents)
+        if mode == "text":
+            ocr_future = loop.run_in_executor(None, _ocr_image, contents)
+            visual_results, raw_text = await asyncio.gather(visual_future, ocr_future)
+        else:
+            visual_results = await visual_future
+            raw_text = None
+
+    matched = []
+    seen_match = set()
+
+    # 1. High-confidence visual → return immediately
+    best_visual = max(visual_results, key=lambda x: x[1]) if visual_results else ("", 0)
+    if best_visual[1] >= 0.7:
+        return {"ingredients": [best_visual[0]]}
+
+    # 2. Low-confidence visual → include visual candidates
+    if visual_results:
+        for ing, score in visual_results:
+            if ing.lower() not in seen_match:
+                seen_match.add(ing.lower())
+                matched.append(ing)
+
+    # 3. OCR only in text mode — strict prefix matching only (no fuzzy)
+    if mode == "text" and raw_text:
+        candidates = _extract_candidates(raw_text)
+        # No word expansion; only use the extracted text as-is
+
+        result = await db.execute(
+            select(RecipeIngredient.ingredient_name,
+                   func.count(RecipeIngredient.id).label("cnt"))
+            .where(RecipeIngredient.ingredient_name != "")
+            .group_by(RecipeIngredient.ingredient_name)
+            .order_by(func.count(RecipeIngredient.id).desc())
+        )
+        all_ingredients = [(r[0].lower(), r[0]) for r in result if r[0]]
+
+        # Build a prefix lookup for fast matching
+        # Map first 4 chars → list of ingredients starting with those chars
+        prefix_map = {}
+        for lower, orig in all_ingredients:
+            key = lower[:4]
+            prefix_map.setdefault(key, []).append((lower, orig))
+
+        for cand in sorted(candidates, key=len, reverse=True):
+            cand = cand.strip().lower()
+            if not cand or len(cand) < 3 or cand in seen_match:
+                continue
+            cand_words = set(cand.split())
+            if cand_words.issubset(NON_INGREDIENT_WORDS | STOP_WORDS):
+                continue
+
+            # Check candidates against DB ingredients — prefix only
+            matched_ing = None
+            prefix_key = cand[:4]
+            for lower, orig in prefix_map.get(prefix_key, []):
+                if lower.startswith(cand) or cand.startswith(lower):
+                    if matched_ing is None or len(orig) < len(matched_ing):
+                        matched_ing = orig
+
+            if matched_ing and matched_ing.lower() not in seen_match:
+                seen_match.add(matched_ing.lower())
+                matched.append(matched_ing)
+
+    return {"ingredients": matched[:10]}
 
 
 # ---------------------------------------------------------------------------

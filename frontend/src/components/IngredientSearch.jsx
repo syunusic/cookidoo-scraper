@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { suggestIngredients } from '../api'
+import { suggestIngredients, recognizeIngredients } from '../api'
 
 export default function IngredientSearch({ ingredients, setIngredients, onSearch, loading, collapsed }) {
   const [input, setInput] = useState('')
@@ -10,7 +10,11 @@ export default function IngredientSearch({ ingredients, setIngredients, onSearch
   const [maxMissing, setMaxMissing] = useState(3)
   const [filterTotal, setFilterTotal] = useState(false)
   const [maxTotal, setMaxTotal] = useState(15)
+  const [recognizing, setRecognizing] = useState(false)
+  const [textMode, setTextMode] = useState(false)
+  const [msg, setMsg] = useState('')
   const inputRef = useRef(null)
+  const cameraRef = useRef(null)
   const suggestTimer = useRef(null)
 
   useEffect(() => {
@@ -57,6 +61,65 @@ export default function IngredientSearch({ ingredients, setIngredients, onSearch
 
   const removeIngredient = (index) => {
     setIngredients(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const compressImage = (file, maxW = 1200, quality = 0.8) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const img = new Image()
+        img.onload = () => {
+          let w = img.width, h = img.height
+          if (w > maxW || h > maxW) {
+            const ratio = Math.min(maxW / w, maxW / h)
+            w = Math.round(w * ratio)
+            h = Math.round(h * ratio)
+          }
+          const canvas = document.createElement('canvas')
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(img, 0, 0, w, h)
+          canvas.toBlob(blob => {
+            if (blob) resolve(new File([blob], file.name || 'photo.jpg', { type: 'image/jpeg' }))
+            else resolve(file)
+          }, 'image/jpeg', quality)
+        }
+        img.onerror = () => resolve(file)
+        img.src = reader.result
+      }
+      reader.onerror = () => resolve(file)
+      reader.readAsDataURL(file)
+    })
+  }
+
+  const handleCameraCapture = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setMsg('')
+    setRecognizing(true)
+    try {
+      const compressed = await compressImage(file)
+      const mode = textMode ? 'text' : 'visual'
+      const ingredients = await recognizeIngredients(compressed, mode)
+      if (ingredients.length > 0) {
+        setIngredients(prev => {
+          const existing = new Set(prev.map(i => i.toLowerCase()))
+          const newItems = ingredients.filter(i => !existing.has(i.toLowerCase()))
+          return [...prev, ...newItems]
+        })
+        setMsg(`Reconocidos: ${ingredients.join(', ')}`)
+      } else {
+        setMsg('No se reconocieron ingredientes en la foto')
+      }
+    } catch (err) {
+      console.error(err)
+      setMsg('Error al procesar la foto')
+    } finally {
+      setRecognizing(false)
+      e.target.value = ''
+      setTimeout(() => setMsg(''), 5000)
+    }
   }
 
   if (collapsed) return null
@@ -143,7 +206,93 @@ export default function IngredientSearch({ ingredients, setIngredients, onSearch
           >
             +
           </button>
+          <button
+            type="button"
+            onClick={() => cameraRef.current?.click()}
+            disabled={recognizing}
+            className={`px-3 py-2.5 rounded-lg font-medium disabled:opacity-50 ${
+              textMode
+                ? 'bg-orange-100 text-orange-700 border border-orange-300'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+            title={textMode ? "Foto de texto (etiqueta/receta)" : "Foto de ingredientes"}
+          >
+            {recognizing ? (
+              <span className="inline-block w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+            ) : textMode ? (
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+                <path d="M7 13l3 3 6-6" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+              </svg>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setTextMode(!textMode)}
+            className={`px-3 py-2.5 rounded-lg text-sm flex items-center gap-1 ${
+              textMode
+                ? 'bg-orange-500 text-white shadow-sm'
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            }`}
+            title={textMode ? "Cambiar a modo visual" : "Cambiar a modo texto (leer etiquetas)"}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span className="hidden sm:inline">Texto</span>
+          </button>
+          <input
+            ref={cameraRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleCameraCapture}
+            className="hidden"
+          />
         </div>
+
+        <div className="mb-3 space-y-1.5">
+          <div className="flex items-center gap-2 text-xs">
+            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full ${
+              textMode ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                textMode ? 'bg-orange-500' : 'bg-green-500'
+              }`} />
+              {textMode ? '🔤 Modo texto' : '📷 Modo visual'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setTextMode(!textMode)}
+              className="text-gray-400 hover:text-gray-700 underline decoration-dotted"
+            >
+              {textMode ? 'cambiar a visual' : 'cambiar a texto'}
+            </button>
+          </div>
+          <div className="text-xs text-gray-400 leading-relaxed">
+            {textMode ? (
+              <span>Lee texto en la foto (etiquetas, listas de compras, recetas escritas)</span>
+            ) : (
+              <span>Reconoce alimentos visualmente (frutas, verduras, carnes, etc.)</span>
+            )}
+          </div>
+        </div>
+
+        {msg && (
+          <div className="mb-3 text-sm text-gray-600 bg-gray-50 rounded-lg px-3 py-2 text-center">
+            {msg}
+          </div>
+        )}
 
         {ingredients.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-4">

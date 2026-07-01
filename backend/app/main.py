@@ -13,6 +13,11 @@ from app.routes.recipes import router as recipes_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # Pre-warm vision model in a thread (download weights on startup, not on first request)
+    import asyncio
+    from app.vision import _get_model
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _get_model)
     yield
 
 

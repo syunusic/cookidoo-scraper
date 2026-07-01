@@ -34,6 +34,19 @@ export async function listRecipes(options = {}) {
   return res.json()
 }
 
+export async function recognizeIngredients(file, mode = 'visual') {
+  const formData = new FormData()
+  formData.append('file', file)
+  const url = `${API_BASE}/recipes/ingredients/recognize?mode=${mode}`
+  const res = await fetch(url, {
+    method: 'POST',
+    body: formData,
+  })
+  if (!res.ok) throw new Error('Error al reconocer ingredientes')
+  const data = await res.json()
+  return data.ingredients || []
+}
+
 let suggestCache = {}
 export async function suggestIngredients(query) {
   if (!query || query.length < 1) return []
