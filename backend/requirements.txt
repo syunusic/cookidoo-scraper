@@ -4,8 +4,11 @@ sqlalchemy
 aiosqlite
 click
 pydantic
+python-multipart
 beautifulsoup4
 requests
 tenacity
 thefuzz
 python-Levenshtein
+pytesseract
+Pillow
